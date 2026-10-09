@@ -271,7 +271,8 @@ function dayView() {
   else if (!occ.length) summary = "No classes";
   else {
     const mins = occ.reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
-    summary = `${occ.length} ${occ.length === 1 ? "class" : "classes"}, ${occ[0].start}–${occ[occ.length - 1].end}, ${fmtHours(mins)} in total`;
+    const mandMins = occ.filter((o) => o.mandatory).reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
+    summary = `${occ.length} ${occ.length === 1 ? "class" : "classes"}, ${occ[0].start}–${occ[occ.length - 1].end}, ${fmtHours(mins)} in total, ${fmtHours(mandMins)} mandatory`;
   }
   if (state.swaps.has(d)) summary = `${state.swaps.get(d)}. ${summary}`;
   return `<section class="day" data-swipe>
