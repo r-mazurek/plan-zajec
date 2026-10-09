@@ -1,6 +1,6 @@
 // Service worker: offline copy of the app and last-seen data, plus push notifications.
 // Bump when anything in public/ changes, so installed apps drop the old copy.
-const VERSION = "v3";
+const VERSION = "v4";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest", "/icons/icon-192.png"];
 const SHELL_CACHE = `shell-${VERSION}`;
 const DATA_CACHE = `data-${VERSION}`;

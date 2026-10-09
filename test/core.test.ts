@@ -123,6 +123,6 @@ describe("auth", () => {
     expect(await verifyAccess(req, undefined, undefined, "1")).toBe(true);
   });
   it("refuses requests without an Access token once configured", async () => {
-    expect(await verifyAccess(req, "team.cloudflareaccess.com", "aud", "1")).toBe(false);
+    expect(await verifyAccess(req, "team.cloudflareaccess.com", "aud")).toBe(false);
   });
 });

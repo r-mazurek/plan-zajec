@@ -590,10 +590,12 @@ function openOccurrence(id) {
 }
 
 // ----- task form -----
-function upcomingOccurrences(subjectId, includeId) {
+// Assignments are only ever handed in at labs, so lectures are offered for exams only.
+// `includeId` (the class the task is already linked to) is kept either way.
+function upcomingOccurrences(subjectId, kind, includeId) {
   const now = nowLocal().stamp;
   return state.occ
-    .filter((o) => o.subject === subjectId && (`${o.date}T${o.start}` > now || o.id === includeId))
+    .filter((o) => o.subject === subjectId && (o.id === includeId || (`${o.date}T${o.start}` > now && (kind === "exam" || o.kind === "lab"))))
     .slice(0, 12);
 }
 
@@ -616,9 +618,10 @@ function openTaskForm(task, preset = {}) {
     offsets: task ? [...task.reminderOffsets] : [...settings.defaults.assignment],
     offsetsTouched: !!task,
   };
+  const linkedId = task?.occurrenceId ?? preset.occurrenceId;
 
   const draw = () => {
-    const occs = f.subjectId ? upcomingOccurrences(f.subjectId, f.occurrenceId) : [];
+    const occs = f.subjectId ? upcomingOccurrences(f.subjectId, f.kind, linkedId) : [];
     const canClass = occs.length > 0;
     if (!canClass && f.dueType === "class") f.dueType = "date";
     if (f.dueType === "class" && !occs.some((o) => o.id === f.occurrenceId)) f.occurrenceId = occs[0]?.id ?? "";
@@ -647,7 +650,7 @@ function openTaskForm(task, preset = {}) {
             <button type="button" class="${f.dueType === "class" ? "on" : ""}" data-f="dueType" data-v="class" ${canClass ? "" : "disabled"}>At a class</button>
             <button type="button" class="${f.dueType === "date" ? "on" : ""}" data-f="dueType" data-v="date">On a date</button>
           </div>
-          ${!canClass && f.subjectId ? '<small class="hint">This subject has no upcoming classes in the plan, so pick a date.</small>' : ""}
+          ${!canClass && f.subjectId ? `<small class="hint">This subject has no upcoming ${f.kind === "exam" ? "classes" : "labs"} in the plan, so pick a date.</small>` : ""}
         </div>
         ${f.dueType === "class" && canClass ? `<label class="field"><span>Class</span>
           <select name="occurrenceId">${occs.map((o) => `<option value="${esc(o.id)}" ${o.id === f.occurrenceId ? "selected" : ""}>${esc(`${kindLabel(o)}, ${human(o.date)}, ${o.start}`)}${o === occs[0] ? " (next)" : ""}</option>`).join("")}</select></label>` : ""}
