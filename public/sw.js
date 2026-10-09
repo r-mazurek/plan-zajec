@@ -1,6 +1,6 @@
 // Service worker: offline copy of the app and last-seen data, plus push notifications.
 // Bump when anything in public/ changes, so installed apps drop the old copy.
-const VERSION = "v2";
+const VERSION = "v3";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest", "/icons/icon-192.png"];
 const SHELL_CACHE = `shell-${VERSION}`;
 const DATA_CACHE = `data-${VERSION}`;
@@ -39,18 +39,36 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // App shell and fonts: serve cached copy right away, refresh it in the background.
+  // Page loads: network first, so an expired Cloudflare Access session gets
+  // its redirect to the login page; the cached page is only for offline use.
+  if (req.mode === "navigate") {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok && !res.redirected) {
+            const copy = res.clone();
+            caches.open(SHELL_CACHE).then((c) => c.put("/", copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match("/").then((r) => r || Response.error())),
+    );
+    return;
+  }
+
+  // App files and fonts: serve cached copy right away, refresh it in the background.
   const sameOrigin = url.origin === location.origin;
   const isFont = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";
   if (!sameOrigin && !isFont) return;
-  const key = req.mode === "navigate" ? "/" : req;
   e.respondWith(
-    caches.match(key).then((cached) => {
+    caches.match(req).then((cached) => {
       const fresh = fetch(req)
         .then((res) => {
-          if (res.ok || res.type === "opaque") {
+          // Only keep real files: a same-origin request that was redirected is the Access login page.
+          const keep = sameOrigin ? res.ok && res.type === "basic" && !res.redirected : res.ok || res.type === "opaque";
+          if (keep) {
             const copy = res.clone();
-            caches.open(SHELL_CACHE).then((c) => c.put(key, copy));
+            caches.open(SHELL_CACHE).then((c) => c.put(req, copy));
           }
           return res;
         })

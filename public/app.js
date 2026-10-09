@@ -82,7 +82,13 @@ async function api(path, { method = "GET", body } = {}) {
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
+    redirect: "manual",
   });
+  // Cloudflare Access session expired: reload so the page goes through the login.
+  if (res.type === "opaqueredirect") {
+    location.reload();
+    return new Promise(() => {});
+  }
   let data = {};
   try {
     data = await res.json();
