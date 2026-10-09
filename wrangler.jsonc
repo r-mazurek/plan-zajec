@@ -7,25 +7,23 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/__scheduled"]
+    "run_worker_first": ["/api/*", "/__scheduled"],
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "plan-zajec",
-      // Replace with the id printed by `npx wrangler d1 create plan-zajec` before the first deploy.
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
-    }
+      "database_id": "b1fa2f42-d414-4721-99ee-70680782b618",
+      "migrations_dir": "migrations",
+    },
   ],
   // Every 15 minutes; the Worker decides which reminders are due in Europe/Warsaw time.
   "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {
-    // Public half of the VAPID key pair (run `npm run vapid`). The private half is a secret.
-    "VAPID_PUBLIC_KEY": "",
+    "VAPID_PUBLIC_KEY": "BIEKXXdGimUk2eun6yn3uLDgspThDowXUS0ekx3YTtmj8V0oIsf6o-CPY1UAnRR5aFyGBHfb6dRGSeaoRiyOEsI",
     // Contact address push services can reach if something goes wrong. Use your own.
-    "VAPID_SUBJECT": "mailto:you@example.com"
+    "VAPID_SUBJECT": "mailto:you@example.com",
     // Set ACCESS_TEAM_DOMAIN and ACCESS_AUD once Cloudflare Access is in front of the app.
   },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
 }
