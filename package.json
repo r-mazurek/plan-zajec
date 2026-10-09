@@ -5,7 +5,9 @@
     "dev": "wrangler dev",
     "db:migrate:local": "wrangler d1 migrations apply plan-zajec --local",
     "db:migrate:remote": "wrangler d1 migrations apply plan-zajec --remote",
+    "predeploy": "npm test && npm run typecheck && npm run check-tasks",
     "deploy": "wrangler deploy",
+    "check-tasks": "tsx scripts/check-tasks.ts",
     "test": "vitest run",
     "typecheck": "tsc",
     "vapid": "node scripts/vapid.mjs"
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261009.1",
     "http_ece": "^1.2.1",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.149.0"

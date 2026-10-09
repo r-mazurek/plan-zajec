@@ -23,7 +23,9 @@
     "VAPID_PUBLIC_KEY": "BJ6-7LiktjW9yHwCATm0c4vdDK_OL7Uazfybm78M-yf5zN_dzIPWmud8kTF8AMVqarZJxLEoaPJMg3sDVv_vgEA",
     // Contact address push services can reach if something goes wrong. Use your own.
     "VAPID_SUBJECT": "mailto:rafalm2404@gmail.com",
-    // Set ACCESS_TEAM_DOMAIN and ACCESS_AUD once Cloudflare Access is in front of the app.
+    // Cloudflare Access in front of the app; without these the API refuses every request.
+    "ACCESS_TEAM_DOMAIN": "lucky-wind-488b.cloudflareaccess.com",
+    "ACCESS_AUD": "7c6c2abde6ae0260d2488f1c1279919f3c8cec2f82f94b805a6eb1c4ab77e6ee",
   },
   "observability": { "enabled": true },
 }

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import scheduleData from "../data/schedule.json";
+import { verifyAccess } from "../src/auth";
 import { b64urlDecode, b64urlEncode, encryptPayload, vapidAuthorization } from "../src/push";
 import { planReminders, relativeDay } from "../src/reminders";
 import { dayNotes, occurrences, semesterWeek, type Schedule } from "../src/schedule";
@@ -110,5 +111,18 @@ describe("web push", () => {
     );
     expect(ok).toBe(true);
     expect(JSON.parse(new TextDecoder().decode(b64urlDecode(c))).aud).toBe("https://web.push.apple.com");
+  });
+});
+
+describe("auth", () => {
+  const req = new Request("https://plan.example/api/tasks");
+  it("refuses requests when Cloudflare Access isn't configured", async () => {
+    expect(await verifyAccess(req, undefined, undefined)).toBe(false);
+  });
+  it("lets requests through only when auth is explicitly disabled for local dev", async () => {
+    expect(await verifyAccess(req, undefined, undefined, "1")).toBe(true);
+  });
+  it("refuses requests without an Access token once configured", async () => {
+    expect(await verifyAccess(req, "team.cloudflareaccess.com", "aud", "1")).toBe(false);
   });
 });

@@ -14,6 +14,8 @@ export interface Env {
   VAPID_SUBJECT: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  /** "1" skips the Access check; only for local dev via .dev.vars. */
+  AUTH_DISABLED?: string;
 }
 
 const schedule = scheduleData as Schedule;
@@ -23,7 +25,7 @@ const subjectById = new Map(schedule.subjects.map((s) => [s.id, s]));
 const app = new Hono<{ Bindings: Env }>();
 
 app.use("/api/*", async (c, next) => {
-  if (!(await verifyAccess(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD))) {
+  if (!(await verifyAccess(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD, c.env.AUTH_DISABLED))) {
     return c.json({ error: "Not signed in through Cloudflare Access." }, 401);
   }
   await next();
