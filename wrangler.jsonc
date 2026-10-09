@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "plan-zajec",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/__scheduled"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "plan-zajec",
+      // Replace with the id printed by `npx wrangler d1 create plan-zajec` before the first deploy.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Every 15 minutes; the Worker decides which reminders are due in Europe/Warsaw time.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "vars": {
+    // Public half of the VAPID key pair (run `npm run vapid`). The private half is a secret.
+    "VAPID_PUBLIC_KEY": "",
+    // Contact address push services can reach if something goes wrong. Use your own.
+    "VAPID_SUBJECT": "mailto:you@example.com"
+    // Set ACCESS_TEAM_DOMAIN and ACCESS_AUD once Cloudflare Access is in front of the app.
+  },
+  "observability": { "enabled": true }
+}

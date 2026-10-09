@@ -1,0 +1,52 @@
+{
+  "timezone": "Europe/Warsaw",
+  "semester": {
+    "name": "Winter semester 2026/27",
+    "classesFrom": "2026-10-01",
+    "classesTo": "2027-01-31",
+    "examSession": { "from": "2027-02-01", "to": "2027-02-14" },
+    "breaks": [
+      { "from": "2026-12-24", "to": "2027-01-06", "label": "Christmas break" }
+    ],
+    "daysOff": [
+      { "date": "2026-11-02", "label": "Day off" },
+      { "date": "2026-11-11", "label": "Independence Day" }
+    ],
+    "swaps": [
+      { "date": "2027-01-28", "follows": 1, "label": "Monday timetable" },
+      { "date": "2027-01-29", "follows": 3, "label": "Wednesday timetable" }
+    ]
+  },
+  "subjects": [
+    { "id": "apsi", "abbr": "APSI", "name": "Analiza i projektowanie systemów informatycznych", "short": "Analiza i proj. SI" },
+    { "id": "ap", "abbr": "AP", "name": "Aplikacje przemysłowe", "short": "Aplikacje przemysłowe" },
+    { "id": "pz", "abbr": "PZ", "name": "Projekt zespołowy", "short": "Projekt zespołowy" },
+    { "id": "apoc", "abbr": "APOC", "name": "Algorytmy przetwarzania obrazów cyfrowych", "short": "Przetwarzanie obrazów" },
+    { "id": "pw", "abbr": "PW", "name": "Programowanie współbieżne", "short": "Programowanie współbieżne" },
+    { "id": "g3d", "abbr": "G3D", "name": "Wprowadzenie do grafiki 3D", "short": "Grafika 3D" },
+    { "id": "wo", "abbr": "WO", "name": "Wykład ogólnouczelniany", "short": "Wykład ogólnouczelniany" },
+    { "id": "idt", "abbr": "IDT", "name": "Inżynieria danych telemetrycznych i skalowanie systemów analitycznych", "short": "Inżynieria danych telemetrycznych" },
+    { "id": "apb", "abbr": "APB", "name": "Automatyzacja procesów budowania i wdrażania systemów IT", "short": "Automatyzacja CI/CD" }
+  ],
+  "sessions": [
+    { "id": "pw-w", "subject": "pw", "kind": "lecture", "day": 1, "start": "12:00", "end": "14:00", "room": "D003", "teacher": "dr Paweł Pączkowski", "every": 2, "anchor": "2026-10-05", "mandatory": true },
+    { "id": "wo-w", "subject": "wo", "kind": "lecture", "remote": true, "day": 1, "start": "17:00", "end": "18:30", "room": "Online", "mandatory": true },
+
+    { "id": "apsi-w", "subject": "apsi", "kind": "lecture", "day": 2, "start": "09:00", "end": "10:00", "room": "1.14", "teacher": "dr Robert Fidytek", "mandatory": true },
+    { "id": "ap-w", "subject": "ap", "kind": "lecture", "day": 2, "start": "10:00", "end": "12:00", "room": "1.14", "teacher": "dr Jakub Neumann, prof. UG", "mandatory": true },
+    { "id": "ap-l", "subject": "ap", "kind": "lab", "day": 2, "start": "12:00", "end": "14:00", "room": "A001", "group": "1", "teacher": "dr Jakub Neumann, prof. UG", "mandatory": true },
+    { "id": "pz-l", "subject": "pz", "kind": "lab", "day": 2, "start": "14:00", "end": "16:00", "room": "3.13", "group": "1", "teacher": "dr Mikołaj Czechlewski", "mandatory": true },
+
+    { "id": "apoc-l", "subject": "apoc", "kind": "lab", "day": 3, "start": "08:00", "end": "10:00", "room": "A202", "teacher": "dr inż. Agnieszka Rowińska-Schwarzweller", "mandatory": true },
+    { "id": "apoc-w", "subject": "apoc", "kind": "lecture", "day": 3, "start": "10:00", "end": "12:00", "room": "1.14", "teacher": "dr inż. Agnieszka Rowińska-Schwarzweller", "mandatory": true },
+    { "id": "apsi-l", "subject": "apsi", "kind": "lab", "day": 3, "start": "14:00", "end": "16:00", "room": "3.11", "group": "1", "teacher": "dr Robert Fidytek", "mandatory": true },
+
+    { "id": "pw-l", "subject": "pw", "kind": "lab", "day": 4, "start": "14:00", "end": "16:00", "room": "3.04", "group": "3", "teacher": "dr Paweł Pączkowski", "mandatory": true },
+    { "id": "g3d-w", "subject": "g3d", "kind": "lecture", "day": 4, "start": "16:00", "end": "18:00", "room": "A202", "teacher": "dr Piotr Arłukowicz, prof. UG", "mandatory": true },
+    { "id": "g3d-l", "subject": "g3d", "kind": "lab", "day": 4, "start": "18:00", "end": "20:00", "room": "A202", "teacher": "dr Piotr Arłukowicz, prof. UG", "mandatory": true }
+  ],
+  "pending": [
+    { "subject": "idt", "note": "Lecture and lab, run by a company. Times not announced yet." },
+    { "subject": "apb", "note": "Lecture and lab, run by a company. Times not announced yet." }
+  ]
+}
