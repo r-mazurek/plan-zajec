@@ -20,9 +20,9 @@
   // Every 15 minutes; the Worker decides which reminders are due in Europe/Warsaw time.
   "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {
-    "VAPID_PUBLIC_KEY": "BIEKXXdGimUk2eun6yn3uLDgspThDowXUS0ekx3YTtmj8V0oIsf6o-CPY1UAnRR5aFyGBHfb6dRGSeaoRiyOEsI",
+    "VAPID_PUBLIC_KEY": "BOYh9Y2fkLb0eETjb1YM15amtzDoPXrNUMJd_W6Q2Mm606OjH1YCxt2TCBOvvtW5zBUfvB9ZrsGoM-2Bd3P7owE",
     // Contact address push services can reach if something goes wrong. Use your own.
-    "VAPID_SUBJECT": "mailto:you@example.com",
+    "VAPID_SUBJECT": "mailto:rafalm2404@gmail.com",
     // Set ACCESS_TEAM_DOMAIN and ACCESS_AUD once Cloudflare Access is in front of the app.
   },
   "observability": { "enabled": true },
