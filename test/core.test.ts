@@ -23,19 +23,23 @@ describe("time", () => {
 });
 
 describe("schedule", () => {
-  it("puts the biweekly lecture on 5 Oct, 19 Oct, but not 12 Oct", () => {
-    const pw = occurrences(s, "2026-10-05", "2026-10-25").filter((o) => o.sessionId === "pw-w").map((o) => o.date);
+  it("puts a biweekly class on 5 Oct, 19 Oct, but not 12 Oct", () => {
+    const biweekly: Schedule = {
+      ...s,
+      sessions: s.sessions.map((x) => (x.id === "pw-w" ? { ...x, every: 2, anchor: "2026-10-05" } : x)),
+    };
+    const pw = occurrences(biweekly, "2026-10-05", "2026-10-25").filter((o) => o.sessionId === "pw-w").map((o) => o.date);
     expect(pw).toEqual(["2026-10-05", "2026-10-19"]);
   });
   it("skips days off and the Christmas break", () => {
     expect(occurrences(s, "2026-11-02", "2026-11-02")).toEqual([]);
     expect(occurrences(s, "2026-11-11", "2026-11-11")).toEqual([]);
     expect(occurrences(s, "2026-12-24", "2027-01-06")).toEqual([]);
-    expect(occurrences(s, "2027-01-07", "2027-01-07").length).toBe(3);
+    expect(occurrences(s, "2027-01-07", "2027-01-07").length).toBe(2);
     expect(dayNotes(s, "2026-11-09", "2026-11-13")).toEqual([{ date: "2026-11-11", label: "Independence Day" }]);
   });
-  it("has 12 classes in a full week with the biweekly lecture", () => {
-    expect(occurrences(s, "2026-10-19", "2026-10-25").length).toBe(12);
+  it("has 11 classes in a full week", () => {
+    expect(occurrences(s, "2026-10-19", "2026-10-25").length).toBe(11);
     expect(occurrences(s, "2026-10-12", "2026-10-18").length).toBe(11);
   });
   it("runs Monday classes on Thu 28 Jan and Wednesday classes on Fri 29 Jan", () => {

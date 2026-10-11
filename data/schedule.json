@@ -79,12 +79,10 @@
       "subject": "pw",
       "kind": "lecture",
       "day": 1,
-      "start": "12:00",
-      "end": "14:00",
+      "start": "14:00",
+      "end": "16:00",
       "room": "D003",
       "teacher": "dr Paweł Pączkowski",
-      "every": 2,
-      "anchor": "2026-10-05",
       "mandatory": false
     },
     {
@@ -194,17 +192,6 @@
       "mandatory": true
     },
     {
-      "id": "g3d-w",
-      "subject": "g3d",
-      "kind": "lecture",
-      "day": 4,
-      "start": "16:00",
-      "end": "18:00",
-      "room": "A202",
-      "teacher": "dr Piotr Arłukowicz, prof. UG",
-      "mandatory": true
-    },
-    {
       "id": "g3d-l",
       "subject": "g3d",
       "kind": "lab",
@@ -224,6 +211,10 @@
     {
       "subject": "apb",
       "note": "Lecture and lab, run by a company. Times not announced yet."
+    },
+    {
+      "subject": "g3d",
+      "note": "Lecture time to be announced."
     }
   ]
 }
