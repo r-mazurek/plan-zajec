@@ -2,8 +2,9 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import scheduleData from "../data/schedule.json";
 import { verifyAccess } from "../src/auth";
+import { parseLinkUrl } from "../src/index";
 import { b64urlDecode, b64urlEncode, encryptPayload, vapidAuthorization } from "../src/push";
-import { planReminders, relativeDay } from "../src/reminders";
+import { classesStartingSoon, planReminders, relativeDay } from "../src/reminders";
 import { dayNotes, occurrences, semesterWeek, type Schedule } from "../src/schedule";
 import { utcToZoned, weekday, zonedToUtc } from "../src/time";
 
@@ -128,5 +129,38 @@ describe("auth", () => {
   });
   it("refuses requests without an Access token once configured", async () => {
     expect(await verifyAccess(req, "team.cloudflareaccess.com", "aud")).toBe(false);
+  });
+});
+
+describe("links", () => {
+  it("adds https:// to bare addresses", () => {
+    expect(parseLinkUrl("github.com/pw/labs")).toBe("https://github.com/pw/labs");
+    expect(parseLinkUrl("  http://example.edu.pl ")).toBe("http://example.edu.pl/");
+  });
+  it("rejects anything that isn't a web address", () => {
+    expect(() => parseLinkUrl("")).toThrow();
+    expect(() => parseLinkUrl("javascript:alert(1)")).toThrow();
+    expect(() => parseLinkUrl("notes")).toThrow();
+  });
+});
+
+describe("class alerts", () => {
+  const sched = scheduleData as Schedule;
+  const all = occurrences(sched, sched.semester.classesFrom, sched.semester.classesTo);
+  const pick = (mandatory: boolean) => all.find((o) => o.mandatory === mandatory && !all.some((x) => x !== o && x.date === o.date && x.start === o.start))!;
+  const at = (o: { date: string; start: string }, minsBefore: number) =>
+    zonedToUtc(o.date, o.start, "Europe/Warsaw") - minsBefore * 60_000;
+
+  it("picks classes starting in exactly 15 minutes, once per quarter-hour run", () => {
+    const o = pick(true);
+    expect(classesStartingSoon(sched, "all", at(o, 15), "Europe/Warsaw").map((x) => x.id)).toContain(o.id);
+    expect(classesStartingSoon(sched, "all", at(o, 30), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
+    expect(classesStartingSoon(sched, "all", at(o, 0), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
+  });
+  it("skips non-mandatory classes in mandatory-only mode and everything when off", () => {
+    const opt = pick(false);
+    expect(classesStartingSoon(sched, "all", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).toContain(opt.id);
+    expect(classesStartingSoon(sched, "mandatory", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).not.toContain(opt.id);
+    expect(classesStartingSoon(sched, "off", at(pick(true), 15), "Europe/Warsaw")).toEqual([]);
   });
 });

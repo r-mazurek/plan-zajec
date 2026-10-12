@@ -1,6 +1,6 @@
 // Service worker: offline copy of the app and last-seen data, plus push notifications.
 // Bump when anything in public/ changes, so installed apps drop the old copy.
-const VERSION = "v4";
+const VERSION = "v6";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest", "/icons/icon-192.png"];
 const SHELL_CACHE = `shell-${VERSION}`;
 const DATA_CACHE = `data-${VERSION}`;
@@ -98,11 +98,13 @@ self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   const url = new URL(e.notification.data?.url || "/", location.origin);
   const taskId = url.searchParams.get("task");
+  const occId = url.searchParams.get("occ");
   e.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
       const client = list.find((c) => new URL(c.url).origin === location.origin);
       if (client) {
         if (taskId) client.postMessage({ type: "open-task", id: taskId });
+        else if (occId) client.postMessage({ type: "open-occ", id: occId });
         return client.focus();
       }
       return self.clients.openWindow(url.href);

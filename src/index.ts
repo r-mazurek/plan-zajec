@@ -2,7 +2,16 @@ import { Hono } from "hono";
 import scheduleData from "../data/schedule.json";
 import { verifyAccess } from "./auth";
 import { sendPush, type PushSubscriptionRecord, type VapidKeys } from "./push";
-import { DEFAULT_SETTINGS, humanDate, planReminders, relativeDay, type Settings, type TaskKind } from "./reminders";
+import {
+  CLASS_ALERT_MODES,
+  classesStartingSoon,
+  DEFAULT_SETTINGS,
+  humanDate,
+  planReminders,
+  relativeDay,
+  type Settings,
+  type TaskKind,
+} from "./reminders";
 import { dayNotes, findOccurrence, occurrences, semesterWeek, swapNotes, type Schedule } from "./schedule";
 import { daysBetween, isDate, isLocalDateTime, isTime, splitLocal, utcToZoned, zonedToUtc } from "./time";
 
@@ -49,6 +58,7 @@ async function getSettings(db: D1Database): Promise<Settings> {
   return {
     reminderTime: saved.reminderTime ?? DEFAULT_SETTINGS.reminderTime,
     defaults: { ...DEFAULT_SETTINGS.defaults, ...saved.defaults },
+    classAlerts: saved.classAlerts ?? DEFAULT_SETTINGS.classAlerts,
   };
 }
 
@@ -167,6 +177,7 @@ app.get("/api/bootstrap", async (c) => {
     sessions: schedule.sessions,
     pending: schedule.pending,
     settings: await getSettings(c.env.DB),
+    links: await loadLinks(c.env.DB),
     vapidPublicKey: c.env.VAPID_PUBLIC_KEY ?? null,
   });
 });
@@ -275,8 +286,10 @@ app.put("/api/settings", async (c) => {
       assignment: body.defaults?.assignment !== undefined ? parseOffsets(body.defaults.assignment) : current.defaults.assignment,
       exam: body.defaults?.exam !== undefined ? parseOffsets(body.defaults.exam) : current.defaults.exam,
     },
+    classAlerts: body.classAlerts ?? current.classAlerts,
   };
   if (!isTime(next.reminderTime)) throw bad("Reminder time must look like 18:00.");
+  if (!CLASS_ALERT_MODES.includes(next.classAlerts)) throw bad("Choose which classes to be notified about.");
   await c.env.DB.prepare(
     "INSERT INTO settings (key, value) VALUES ('settings', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   )
@@ -287,6 +300,94 @@ app.put("/api/settings", async (c) => {
     for (const t of results) await rescheduleReminders(c.env.DB, t.id);
   }
   return c.json({ settings: next });
+});
+
+// ---------- subject links ----------
+
+interface LinkRow {
+  id: string;
+  subject_id: string;
+  url: string;
+  title: string | null;
+  created_at: number;
+}
+
+const toLink = (r: LinkRow) => ({ id: r.id, subjectId: r.subject_id, url: r.url, title: r.title ?? "" });
+
+async function loadLinks(db: D1Database) {
+  const { results } = await db.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>();
+  return results.map(toLink);
+}
+
+/** Accepts "github.com/x" as well as full URLs; only http(s). */
+export function parseLinkUrl(v: unknown): string {
+  let s = String(v ?? "").trim();
+  if (!s) throw bad("Enter the link's address.");
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = `https://${s}`;
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    throw bad("That doesn't look like a web address.");
+  }
+  if (!["http:", "https:"].includes(url.protocol) || !url.hostname.includes(".")) {
+    throw bad("That doesn't look like a web address.");
+  }
+  return url.href;
+}
+
+function parseLinkTitle(v: unknown): string | null {
+  return String(v ?? "").trim().slice(0, 100) || null;
+}
+
+app.post("/api/links", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const subjectId = String(body.subjectId ?? "");
+  if (!subjectById.has(subjectId)) throw bad("Pick a subject.");
+  const row: LinkRow = {
+    id: crypto.randomUUID(),
+    subject_id: subjectId,
+    url: parseLinkUrl(body.url),
+    title: parseLinkTitle(body.title),
+    created_at: Date.now(),
+  };
+  await c.env.DB.prepare("INSERT INTO links (id, subject_id, url, title, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(row.id, row.subject_id, row.url, row.title, row.created_at)
+    .run();
+  return c.json({ link: toLink(row) }, 201);
+});
+
+app.patch("/api/links/:id", async (c) => {
+  const id = c.req.param("id");
+  const row = await c.env.DB.prepare("SELECT * FROM links WHERE id = ?").bind(id).first<LinkRow>();
+  if (!row) return c.json({ error: "That link no longer exists." }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (body.url !== undefined) row.url = parseLinkUrl(body.url);
+  if (body.title !== undefined) row.title = parseLinkTitle(body.title);
+  await c.env.DB.prepare("UPDATE links SET url = ?, title = ? WHERE id = ?").bind(row.url, row.title, id).run();
+  return c.json({ link: toLink(row) });
+});
+
+app.delete("/api/links/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM links WHERE id = ?").bind(c.req.param("id")).run();
+  return c.json({ ok: true });
+});
+
+// Favicons come through the Worker, so the app stays same-origin and they're cached for offline use.
+app.get("/api/favicon", async (c) => {
+  const host = c.req.query("host") ?? "";
+  if (!/^[a-z0-9.-]{1,253}$/i.test(host) || !host.includes(".")) throw bad("Pass a host name.");
+  const res = await fetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`, {
+    cf: { cacheEverything: true, cacheTtl: 7 * 86_400 },
+  });
+  // Google answers 404 with a generic globe for unknown sites; let the app show its own icon instead.
+  if (!res.ok) return c.body(null, 404);
+  return new Response(res.body, {
+    headers: {
+      "Content-Type": res.headers.get("Content-Type") ?? "image/png",
+      "Cache-Control": "private, max-age=604800",
+    },
+  });
 });
 
 // ---------- push ----------
@@ -391,10 +492,39 @@ export async function runDueReminders(env: Env, now = Date.now()) {
   return results.length;
 }
 
+// ---------- class alerts cron ----------
+
+export async function runClassAlerts(env: Env, now = Date.now()) {
+  const keys = vapid(env);
+  if (!keys) return 0;
+  const settings = await getSettings(env.DB);
+  let sent = 0;
+  for (const o of classesStartingSoon(schedule, settings.classAlerts, now, TZ)) {
+    // Claim the class first, so a retried run doesn't notify twice.
+    const claim = await env.DB.prepare("INSERT OR IGNORE INTO class_alerts (occurrence_id, sent_at) VALUES (?, ?)")
+      .bind(o.id, now)
+      .run();
+    if (!claim.meta.changes) continue;
+    const mins = Math.round((zonedToUtc(o.date, o.start, TZ) - now) / 60_000);
+    const name = subjectById.get(o.subject)?.name ?? o.subject;
+    await broadcast(env.DB, keys, {
+      title: `${o.mandatory ? "Mandatory" : "Not mandatory"} ${o.kind === "lab" ? "lab" : "lecture"} ${name} starts in ${mins} minutes`,
+      body: o.remote ? "Remote" : o.room ? `Room ${o.room}` : "",
+      url: `/?occ=${encodeURIComponent(o.id)}`,
+      tag: `class-${o.id}`,
+    });
+    sent++;
+  }
+  await env.DB.prepare("DELETE FROM class_alerts WHERE sent_at < ?").bind(now - 30 * 86_400_000).run();
+  return sent;
+}
+
 const handler: ExportedHandler<Env> = {
   fetch: app.fetch,
-  async scheduled(_event, env, ctx) {
+  async scheduled(event, env, ctx) {
     ctx.waitUntil(runDueReminders(env));
+    // The scheduled time is exactly on the quarter hour, unlike Date.now().
+    ctx.waitUntil(runClassAlerts(env, event.scheduledTime));
   },
 };
 

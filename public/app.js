@@ -179,6 +179,8 @@ const icon = {
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
+  link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13.5a4.5 4.5 0 0 0 6.4.4l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.5 1.5"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4-.4l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.5-1.5"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>',
   list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg>',
 };
 
@@ -571,6 +573,7 @@ function openOccurrence(id) {
   if (!o) return;
   const s = subj(o.subject);
   const tasks = tasksForOcc(id);
+  const links = state.boot.links.filter((l) => l.subjectId === o.subject);
   const rows = [
     ["When", `${WD_LONG[weekday(o.date) - 1]} ${dayNum(o.date)} ${MON_LONG[Number(o.date.slice(5, 7)) - 1]}, ${o.start}–${o.end}`],
     ["Type", `${o.kind === "lab" ? "Lab" : "Lecture"}${o.remote ? ", remote" : ""}${o.biweekly ? ", every other week" : ""}`],
@@ -583,9 +586,95 @@ function openOccurrence(id) {
     `${sheetHead(s.name)}
     <div class="occ-band ${o.remote ? "k-remote" : `k-${o.kind}`} ${o.mandatory ? "" : "optional"}"></div>
     <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <h3 class="sheet-sub">Links</h3>
+    ${links.length ? `<div class="links">${links.map((l) => linkRow(l, id)).join("")}</div>` : '<p class="muted">No links for this subject yet.</p>'}
+    <button class="ghost add-link" data-action="new-link" data-subject="${o.subject}" data-occ="${esc(o.id)}">${icon.plus}Add link</button>
     <h3 class="sheet-sub">Due at this class</h3>
     ${tasks.length ? `<div class="group">${tasks.map((t) => taskRow(t, true)).join("")}</div>` : '<p class="muted">Nothing due at this class.</p>'}
     <div class="sheet-actions"><button class="primary" data-action="new-task" data-subject="${o.subject}" data-occ="${esc(o.id)}">${icon.plus}Add task for this class</button></div>`,
+  );
+}
+
+// ----- subject links -----
+const linkHost = (url) => new URL(url).hostname.replace(/^www\./, "");
+const linkShort = (url) => {
+  const u = new URL(url);
+  return `${linkHost(url)}${u.pathname === "/" ? "" : u.pathname}`.replace(/\/$/, "");
+};
+
+// The favicon sits on top of a generic link icon and is removed if it fails to load.
+function linkRow(l, occId) {
+  return `<div class="link">
+    <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">
+      <span class="favicon">${icon.link}<img src="/api/favicon?host=${encodeURIComponent(linkHost(l.url))}" alt="" loading="lazy"></span>
+      <span class="l-text"><span class="l-title">${esc(l.title || linkHost(l.url))}</span><span class="l-url">${esc(linkShort(l.url))}</span></span>
+    </a>
+    <button class="icon-btn small" data-action="edit-link" data-id="${l.id}" data-occ="${esc(occId)}" aria-label="Edit ${esc(l.title || linkHost(l.url))}">${icon.pencil}</button>
+  </div>`;
+}
+document.addEventListener(
+  "error",
+  (e) => {
+    if (e.target.matches?.(".favicon img")) e.target.remove();
+  },
+  true,
+);
+
+// `occId` is the class sheet the form was opened from; it reopens after saving.
+function openLinkForm(link, subjectId, occId) {
+  const back = () => (occId && state.occById.has(occId) ? openOccurrence(occId) : closeSheet());
+  openSheet(
+    `${sheetHead(link ? "Edit link" : "New link")}
+    <form class="form" novalidate>
+      <label class="field"><span>Address</span>
+        <input type="url" name="url" value="${esc(link?.url ?? "")}" placeholder="github.com/…" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+      <label class="field"><span>Name <small>optional</small></span>
+        <input name="title" value="${esc(link?.title ?? "")}" placeholder="Lab exercises" autocomplete="off"></label>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        ${link ? '<button type="button" class="danger ghost" data-delete>Delete</button>' : ""}
+        <button type="button" class="ghost" data-back>Back</button>
+        <button type="submit" class="primary">${link ? "Save link" : "Add link"}</button>
+      </div>
+    </form>`,
+    (root) => {
+      const form = $("form", root);
+      form.addEventListener("input", () => showFormError(form, ""));
+      $("[data-back]", form).addEventListener("click", back);
+      $("[data-delete]", form)?.addEventListener("click", async () => {
+        if (!confirm(`Delete the link to ${linkHost(link.url)}?`)) return;
+        try {
+          await api(`/api/links/${link.id}`, { method: "DELETE" });
+          state.boot.links = state.boot.links.filter((l) => l.id !== link.id);
+          back();
+          toast("Link deleted");
+        } catch (err) {
+          showFormError(form, err.message);
+        }
+      });
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const body = { subjectId, url: form.elements.url.value, title: form.elements.title.value };
+        if (!body.url.trim()) return showFormError(form, "Enter the link's address.");
+        const btn = $('button[type="submit"]', form);
+        btn.disabled = true;
+        try {
+          const { link: saved } = link
+            ? await api(`/api/links/${link.id}`, { method: "PATCH", body })
+            : await api("/api/links", { method: "POST", body });
+          state.boot.links = link
+            ? state.boot.links.map((l) => (l.id === saved.id ? saved : l))
+            : [...state.boot.links, saved];
+          back();
+          toast(link ? "Link saved" : "Link added");
+        } catch (err) {
+          showFormError(form, err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      if (!link) form.elements.url.focus();
+    },
   );
 }
 
@@ -848,7 +937,7 @@ async function notificationsBlock() {
     return `<p class="status-on">${icon.bell}Notifications are on for this device.</p>
       <div class="sheet-actions left"><button class="ghost" data-push="test">Send test notification</button><button class="ghost" data-push="off">Turn off</button></div>`;
   }
-  return `<p>Turn on notifications to get task reminders on this device.</p>
+  return `<p>Turn on notifications to get task and class reminders on this device.</p>
     <div class="sheet-actions left"><button class="primary" data-push="on">${icon.bell}Turn on notifications</button></div>`;
 }
 
@@ -861,7 +950,15 @@ async function openSettings() {
       <button type="button" class="ghost" data-def-add="${kind}">Add</button></div>`;
   openSheet(
     `${sheetHead("Settings")}
-    <section class="set-block"><h3 class="sheet-sub">Notifications</h3><div data-push-block><p class="muted">Checking…</p></div></section>
+    <section class="set-block"><h3 class="sheet-sub">Notifications</h3><div data-push-block><p class="muted">Checking…</p></div>
+      <div class="field"><span>Before each class</span>
+        <div class="seg wide-seg" role="group" aria-label="Notify before classes">
+          ${[["all", "All"], ["mandatory", "Mandatory"], ["off", "Off"]].map(([v, label]) =>
+            `<button type="button" class="${s.classAlerts === v ? "on" : ""}" data-class-alerts="${v}" aria-pressed="${s.classAlerts === v}">${label}</button>`).join("")}
+        </div>
+        <small class="hint">A notification 15 minutes before the class starts.</small>
+      </div>
+    </section>
     <section class="set-block"><h3 class="sheet-sub">Reminders</h3>
       <label class="field"><span>Time of day</span><input type="time" name="reminderTime" value="${s.reminderTime}"></label>
       <div class="field"><span>Default for assignments</span>${chips("assignment")}</div>
@@ -902,7 +999,9 @@ function mountSettings(root) {
     const b = e.target.closest("button");
     if (!b) return;
     const s = state.boot.settings;
-    if (b.dataset.defRemove) {
+    if (b.dataset.classAlerts) {
+      if (b.dataset.classAlerts !== s.classAlerts) save({ classAlerts: b.dataset.classAlerts });
+    } else if (b.dataset.defRemove) {
       const [kind, n] = b.dataset.defRemove.split(":");
       save({ defaults: { [kind]: s.defaults[kind].filter((x) => x !== Number(n)) } });
     } else if (b.dataset.defAdd) {
@@ -999,6 +1098,12 @@ document.addEventListener("click", async (e) => {
       return openOccurrence(b.dataset.id);
     case "new-task":
       return openTaskForm(null, { subjectId: b.dataset.subject, occurrenceId: b.dataset.occ });
+    case "new-link":
+      return openLinkForm(null, b.dataset.subject, b.dataset.occ);
+    case "edit-link": {
+      const l = state.boot.links.find((x) => x.id === b.dataset.id);
+      return l && openLinkForm(l, l.subjectId, b.dataset.occ);
+    }
     case "edit": {
       const t = state.tasks.find((x) => x.id === b.dataset.id);
       return t && openTaskForm(t);
@@ -1072,18 +1177,19 @@ async function start() {
   render();
   const params = new URLSearchParams(location.search);
   const taskId = params.get("task");
+  const occId = params.get("occ");
+  if (taskId || occId) history.replaceState(null, "", "/");
   if (taskId) {
-    history.replaceState(null, "", "/");
     const t = state.tasks.find((x) => x.id === taskId);
     if (t) openTaskForm(t);
-  }
+  } else if (occId) openOccurrence(occId);
 }
 
 navigator.serviceWorker?.addEventListener("message", (e) => {
   if (e.data?.type === "open-task") {
     const t = state.tasks.find((x) => x.id === e.data.id);
     if (t) openTaskForm(t);
-  }
+  } else if (e.data?.type === "open-occ") openOccurrence(e.data.id);
 });
 
 start();

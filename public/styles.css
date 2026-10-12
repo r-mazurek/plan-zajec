@@ -353,6 +353,21 @@ p { margin: 0; }
 .facts dt { color: var(--muted); font-size: 14px; }
 .facts dd { margin: 0; font-weight: 500; }
 
+.links { display: grid; }
+.link { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-top: 1px solid var(--line); }
+.link a { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 0; color: inherit; text-decoration: none; }
+.link a:hover .l-title { text-decoration: underline; }
+.favicon {
+  position: relative; flex: none; width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center; background: var(--surface-2); color: var(--muted);
+}
+.favicon svg { width: 18px; height: 18px; }
+.favicon img { position: absolute; inset: 6px; width: 20px; height: 20px; }
+.l-text { display: grid; min-width: 0; }
+.l-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-url { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-link { margin-top: 8px; }
+
 /* ---------- form ---------- */
 .form { display: grid; gap: 14px; }
 .field { display: grid; gap: 6px; min-width: 0; }

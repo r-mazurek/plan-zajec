@@ -5,7 +5,9 @@ Personal class timetable with subject tasks and push reminders. Built for an iPh
 - **Phone:** day view (swipe between days), compact week view, task list.
 - **Desktop:** week grid with the task list beside it.
 - **Tasks:** assignments or exams, due *at a class* (picked from upcoming classes of that subject) or *on a date*. Each task has its own reminders, e.g. 2 and 1 days before, delivered at the configured time of day (default 18:00).
+- **Links:** each subject keeps its own links (e.g. the GitHub repo with the exercises), shown with the site's favicon in the class sheet.
 - **Notifications:** Web Push from a Cloudflare Worker cron (every 15 minutes).
+- **Class alerts:** a notification 15 minutes before each class ("Mandatory lab … starts in 15 minutes"). In Settings: all classes, mandatory only, or off.
 
 <p>
   <img src="docs/screenshot-phone.png" alt="Day view on a phone: Tuesday's classes on a timeline, with the tasks due that day" height="520">
@@ -23,10 +25,10 @@ src/push.ts        Web Push: VAPID (RFC 8292) + aes128gcm payload encryption (RF
 src/auth.ts        Cloudflare Access JWT check for /api/*
 data/schedule.json the timetable — the file to edit when the plan changes
 scripts/           check-tasks.ts (open tasks vs. the timetable, runs before deploy), vapid.mjs (key pair)
-migrations/        D1 schema (tasks, reminders, push subscriptions, settings)
+migrations/        D1 schema (tasks, reminders, push subscriptions, settings, subject links, sent class alerts)
 ```
 
-Tasks, reminders and settings live in D1. The timetable lives in `data/schedule.json` and is bundled into the Worker, so a timetable change is a commit and a deploy.
+Tasks, reminders, links and settings live in D1. Favicons are fetched through the Worker (`/api/favicon`, from Google's favicon service) so they're cached for offline use. The timetable lives in `data/schedule.json` and is bundled into the Worker, so a timetable change is a commit and a deploy.
 
 ## Editing the timetable
 
