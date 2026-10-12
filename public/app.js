@@ -65,6 +65,7 @@ const state = {
   notes: new Map(),
   swaps: new Map(),
   tasks: [],
+  range: null,
   view: "plan", // narrow layout: 'plan' | 'tasks'
   mode: "day", // narrow plan: 'day' | 'week'
   date: null,
@@ -106,15 +107,20 @@ async function load() {
   let to = sem.examSession?.to ?? sem.classesTo;
   if (to < addDays(today, 60)) to = addDays(today, 60);
   if (daysBetween(from, to) > 200) from = addDays(to, -200);
-  const [o] = await Promise.all([api(`/api/occurrences?from=${from}&to=${to}`), loadTasks()]);
-  state.occ = o.occurrences;
-  state.occById = new Map(o.occurrences.map((x) => [x.id, x]));
-  state.notes = new Map(o.dayNotes.map((n) => [n.date, n.label]));
-  state.swaps = new Map((o.swaps ?? []).map((n) => [n.date, n.label]));
+  state.range = { from, to };
+  await Promise.all([loadOccurrences(), loadTasks()]);
   if (!state.date) {
     state.date = nextWeekday(today);
     state.week = startOfWeek(state.date);
   }
+}
+
+async function loadOccurrences() {
+  const o = await api(`/api/occurrences?from=${state.range.from}&to=${state.range.to}`);
+  state.occ = o.occurrences;
+  state.occById = new Map(o.occurrences.map((x) => [x.id, x]));
+  state.notes = new Map(o.dayNotes.map((n) => [n.date, n.label]));
+  state.swaps = new Map((o.swaps ?? []).map((n) => [n.date, n.label]));
 }
 
 async function loadTasks() {
@@ -276,11 +282,13 @@ function dayView() {
   const loose = looseTasksOn(d);
   let summary;
   if (note) summary = `No classes: ${note}`;
-  else if (!occ.length) summary = "No classes";
+  else if (!occ.some((o) => !o.cancelled)) summary = occ.length ? "All classes cancelled" : "No classes";
   else {
-    const mins = occ.reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
-    const mandMins = occ.filter((o) => o.mandatory).reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
-    summary = `${occ.length} ${occ.length === 1 ? "class" : "classes"}, ${occ[0].start}–${occ[occ.length - 1].end}, ${fmtHours(mins)} in total${mandMins ? `, ${fmtHours(mandMins)} mandatory` : ""}`;
+    const held = occ.filter((o) => !o.cancelled);
+    const mins = held.reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
+    const mandMins = held.filter((o) => o.mandatory).reduce((n, o) => n + toMin(o.end) - toMin(o.start), 0);
+    const off = occ.length - held.length;
+    summary = `${held.length} ${held.length === 1 ? "class" : "classes"}, ${held[0].start}–${held[held.length - 1].end}, ${fmtHours(mins)} in total${mandMins ? `, ${fmtHours(mandMins)} mandatory` : ""}${off ? `, ${off} cancelled` : ""}`;
   }
   if (state.swaps.has(d)) summary = `${state.swaps.get(d)}. ${summary}`;
   return `<section class="day" data-swipe>
@@ -295,7 +303,7 @@ function dayView() {
 }
 
 function emptyDay(d, note) {
-  const next = state.occ.find((o) => o.date > d);
+  const next = state.occ.find((o) => o.date > d && !o.cancelled);
   return `<div class="empty-day"><p>${note ? "Enjoy the day off." : "Nothing on the plan."}</p>
     ${next ? `<button class="next-class" data-action="day" data-date="${next.date}">Next class: ${esc(subj(next.subject).short)}, ${esc(human(next.date))}, ${next.start}</button>` : ""}
   </div>`;
@@ -383,13 +391,14 @@ function block(o, lane, n, detailed, fromHour) {
       ? `<span class="b-tasks">${tasks.slice(0, 2).map((t) => `<span class="b-task ${t.kind}">${esc(t.title)}</span>`).join("")}${tasks.length > 2 ? `<span class="b-more">+${tasks.length - 2} more</span>` : ""}</span>`
       : `<span class="b-badge ${exam ? "exam" : ""}" aria-label="${tasks.length} due">${tasks.length}</span>`
     : "";
-  return `<button class="block ${k} ${o.mandatory ? "" : "optional"} ${exam ? "has-exam" : ""} ${len <= 1 ? "short" : ""}"
+  const status = o.cancelled ? "Cancelled" : o.was ? "Changed" : "";
+  return `<button class="block ${k} ${o.mandatory ? "" : "optional"} ${exam ? "has-exam" : ""} ${len <= 1 ? "short" : ""} ${o.cancelled ? "cancelled" : ""} ${o.was ? "changed" : ""}"
     style="--top:${top};--len:${len};--lane:${lane};--lanes:${n}" data-action="occ" data-id="${esc(o.id)}"
-    aria-label="${esc(`${s.name}, ${kindLabel(o)}, ${o.start} to ${o.end}${o.room ? `, room ${o.room}` : ""}${o.mandatory ? "" : ", not mandatory"}${tasks.length ? `, ${tasks.length} due` : ""}`)}">
+    aria-label="${esc(`${s.name}, ${kindLabel(o)}, ${o.start} to ${o.end}${o.room ? `, room ${o.room}` : ""}${o.mandatory ? "" : ", not mandatory"}${status ? `, ${status.toLowerCase()}` : ""}${tasks.length ? `, ${tasks.length} due` : ""}`)}">
     <span class="b-time">${o.start}–${o.end}${room ? `<span class="b-room"> · ${esc(room)}</span>` : ""}</span>
     <span class="b-name" lang="pl">${esc(s.short)}</span>
     <span class="b-abbr">${esc(s.abbr ?? s.short)}</span>
-    <span class="b-meta"><span class="b-kind">${kindLabel(o)}</span>${room ? `<span class="b-rm"><span class="b-sep"> · </span>${esc(room)}</span>` : ""}</span>
+    <span class="b-meta">${status ? `<span class="b-status">${status}</span><span class="b-sep"> · </span>` : ""}<span class="b-kind">${kindLabel(o)}</span>${room ? `<span class="b-rm"><span class="b-sep"> · </span>${esc(room)}</span>` : ""}</span>
     ${taskLine}
   </button>`;
 }
@@ -452,7 +461,9 @@ function tasksPanel() {
   const open = openTasks().sort((a, b) => a.dueAt.localeCompare(b.dueAt));
   const done = state.tasks.filter((t) => t.done).sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
   let body;
-  if (!open.length) {
+  if (state.group === "exams") {
+    body = examsView();
+  } else if (!open.length) {
     body = `<div class="empty"><p class="empty-title">Nothing due</p>
       <p>Add an assignment or exam and you'll get reminders on your phone before it's due.</p>
       <button class="primary" data-action="new-task">${icon.plus}Add task</button></div>`;
@@ -494,6 +505,7 @@ function tasksPanel() {
       <div class="seg" role="group" aria-label="Group tasks">
         <button class="${state.group === "date" ? "on" : ""}" data-action="group" data-group="date" aria-pressed="${state.group === "date"}">By date</button>
         <button class="${state.group === "subject" ? "on" : ""}" data-action="group" data-group="subject" aria-pressed="${state.group === "subject"}">By subject</button>
+        <button class="${state.group === "exams" ? "on" : ""}" data-action="group" data-group="exams" aria-pressed="${state.group === "exams"}">Exams</button>
       </div>
       ${wide.matches ? `<button class="primary" data-action="new-task">${icon.plus}Add task</button>` : ""}
     </div>
@@ -501,6 +513,34 @@ function tasksPanel() {
     ${done.length ? `<button class="ghost done-toggle" data-action="toggle-done" aria-expanded="${state.showDone}">${state.showDone ? "Hide" : "Show"} done (${done.length})</button>
       ${state.showDone ? `<div class="group done">${done.map((t) => taskRow(t, false)).join("")}</div>` : ""}` : ""}
   </section>`;
+}
+
+function examsView() {
+  const today = nowLocal().date;
+  const sess = state.boot.semester.examSession;
+  let banner = "";
+  if (sess) {
+    const n = daysBetween(today, sess.from);
+    const when =
+      today > sess.to ? "Over" : n > 0 ? `Starts ${n === 1 ? "tomorrow" : `in ${n} days`}` : `On now, day ${1 - n} of ${daysBetween(sess.from, sess.to) + 1}`;
+    banner = `<div class="exam-session"><span class="es-label">Exam session</span>
+      <span class="es-dates">${esc(human(sess.from))} – ${esc(human(sess.to))}</span><span class="es-when">${esc(when)}</span></div>`;
+  }
+  const exams = openTasks().filter((t) => t.kind === "exam").sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  const without = state.boot.subjects.filter((s) => !exams.some((t) => t.subjectId === s.id) && state.boot.sessions.some((x) => x.subject === s.id));
+  const list = exams.length
+    ? `<div class="group">${exams.map((t) => {
+        const n = daysBetween(today, dueDate(t));
+        return `<button class="exam-row" data-action="edit" data-id="${t.id}">
+          <span class="ex-count ${n < 0 ? "past" : ""}"><b>${n === 0 ? "Today" : n < 0 ? "Past" : n}</b>${n <= 0 ? "" : n === 1 ? "day" : "days"}</span>
+          <span class="ex-body"><span class="t-title">${esc(t.title)}</span>
+            <span class="t-meta">${esc(subj(t.subjectId).short)}, ${esc(dueLabel(t))}${t.location ? `, room ${esc(t.location)}` : ""}</span></span>
+        </button>`;
+      }).join("")}</div>`
+    : '<div class="empty"><p class="empty-title">No exams yet</p><p>Add exams as you learn their dates and they\'ll count down here.</p></div>';
+  return `${banner}${list}
+    <div class="sheet-actions left"><button class="primary" data-action="new-task" data-kind="exam">${icon.plus}Add exam</button></div>
+    ${exams.length && without.length ? `<p class="muted exam-missing">No exam added for ${esc(without.map((s) => s.short).join(", "))}.</p>` : ""}`;
 }
 
 const capitalize = (x) => x.charAt(0).toUpperCase() + x.slice(1);
@@ -568,12 +608,39 @@ function toast(msg, isError = false) {
 }
 
 // ----- class detail -----
+const sessionSubject = (occId) => state.boot.sessions.find((x) => x.id === occId.split("@")[0])?.subject;
+const absencesFor = (subjectId) => state.boot.absences.filter((id) => sessionSubject(id) === subjectId).length;
+const subjectInfo = (subjectId) => state.boot.subjectInfo[subjectId] ?? { notes: "", absenceLimit: null };
+const hasMandatory = (subjectId) => state.boot.sessions.some((x) => x.subject === subjectId && x.mandatory);
+
+function absenceLabel(subjectId) {
+  const n = absencesFor(subjectId);
+  const limit = subjectInfo(subjectId).absenceLimit;
+  if (limit === null) return n ? `${n} missed` : "None missed";
+  return `${n} of ${limit} allowed${n >= limit ? ", limit reached" : n === limit - 1 ? ", one left" : ""}`;
+}
+
+function changeNotice(o) {
+  const parts = [];
+  if (o.was?.room !== undefined) parts.push(`room ${o.was.room || "none"} → ${o.room || "none"}`);
+  if (o.was?.start !== undefined || o.was?.end !== undefined) {
+    parts.push(`${o.was.start ?? o.start}–${o.was.end ?? o.end} → ${o.start}–${o.end}`);
+  }
+  if (!o.cancelled && !parts.length && !o.changeNote) return "";
+  const head = o.cancelled ? "Cancelled" : parts.length ? "Changed" : "Note";
+  const detail = [o.cancelled ? "" : parts.join(", "), o.changeNote ?? ""].filter(Boolean).join(". ");
+  return `<p class="occ-notice ${o.cancelled ? "is-cancelled" : ""}"><b>${head}</b>${detail ? ` ${esc(capitalize(detail))}` : ""}</p>`;
+}
+
 function openOccurrence(id) {
   const o = state.occById.get(id);
   if (!o) return;
   const s = subj(o.subject);
   const tasks = tasksForOcc(id);
   const links = state.boot.links.filter((l) => l.subjectId === o.subject);
+  const info = subjectInfo(o.subject);
+  const started = `${o.date}T${o.start}` <= nowLocal().stamp;
+  const missed = state.boot.absences.includes(id);
   const rows = [
     ["When", `${WD_LONG[weekday(o.date) - 1]} ${dayNum(o.date)} ${MON_LONG[Number(o.date.slice(5, 7)) - 1]}, ${o.start}–${o.end}`],
     ["Type", `${o.kind === "lab" ? "Lab" : "Lecture"}${o.remote ? ", remote" : ""}${o.biweekly ? ", every other week" : ""}`],
@@ -581,17 +648,150 @@ function openOccurrence(id) {
     ["Group", o.group],
     ["Teacher", o.teacher],
     ["Attendance", o.mandatory ? "Mandatory" : "Not mandatory"],
+    ["Absences", hasMandatory(o.subject) ? absenceLabel(o.subject) : ""],
   ].filter(([, v]) => v);
+  const limitHit = info.absenceLimit !== null && absencesFor(o.subject) >= info.absenceLimit;
   openSheet(
     `${sheetHead(s.name)}
     <div class="occ-band ${o.remote ? "k-remote" : `k-${o.kind}`} ${o.mandatory ? "" : "optional"}"></div>
-    <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    ${changeNotice(o)}
+    <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${k === "Absences" && limitHit ? "warn" : ""}">${esc(v)}</dd>`).join("")}</dl>
+    <div class="sheet-actions left">
+      <button class="ghost" data-action="change-class" data-id="${esc(id)}">${icon.pencil}${o.cancelled || o.was || o.changeNote ? "Edit change" : "Change this class"}</button>
+      ${o.mandatory && started && !o.cancelled ? `<button class="ghost ${missed ? "on" : ""}" data-action="absence" data-id="${esc(id)}" aria-pressed="${missed}">${missed ? `${icon.check}Missed` : "Mark as missed"}</button>` : ""}
+    </div>
+    <div class="sub-head"><h3 class="sheet-sub">Notes</h3>
+      ${info.notes ? `<button class="icon-btn small" data-action="edit-subject" data-subject="${o.subject}" data-occ="${esc(id)}" aria-label="Edit notes">${icon.pencil}</button>` : ""}</div>
+    ${info.notes ? `<p class="subject-notes">${esc(info.notes)}</p>` : `<button class="ghost add-link" data-action="edit-subject" data-subject="${o.subject}" data-occ="${esc(id)}">${icon.plus}Add notes</button>`}
     <h3 class="sheet-sub">Links</h3>
     ${links.length ? `<div class="links">${links.map((l) => linkRow(l, id)).join("")}</div>` : '<p class="muted">No links for this subject yet.</p>'}
     <button class="ghost add-link" data-action="new-link" data-subject="${o.subject}" data-occ="${esc(o.id)}">${icon.plus}Add link</button>
     <h3 class="sheet-sub">Due at this class</h3>
     ${tasks.length ? `<div class="group">${tasks.map((t) => taskRow(t, true)).join("")}</div>` : '<p class="muted">Nothing due at this class.</p>'}
     <div class="sheet-actions"><button class="primary" data-action="new-task" data-subject="${o.subject}" data-occ="${esc(o.id)}">${icon.plus}Add task for this class</button></div>`,
+  );
+}
+
+// ----- one-off class change -----
+function openChangeForm(id) {
+  const o = state.occById.get(id);
+  if (!o) return;
+  const s = subj(o.subject);
+  const changed = o.cancelled || o.was || o.changeNote;
+  openSheet(
+    `${sheetHead("Change this class")}
+    <p class="muted">${esc(`${s.short}, ${kindLabel(o).toLowerCase()} ${human(o.date)}. Only this one class changes, not the timetable.`)}</p>
+    <form class="form" novalidate>
+      <div class="seg wide-seg" role="group" aria-label="Does the class take place?">
+        <button type="button" class="${o.cancelled ? "" : "on"}" data-cancelled="0" aria-pressed="${!o.cancelled}">Takes place</button>
+        <button type="button" class="${o.cancelled ? "on" : ""}" data-cancelled="1" aria-pressed="${!!o.cancelled}">Cancelled</button>
+      </div>
+      <div class="change-fields" ${o.cancelled ? "hidden" : ""}>
+        <label class="field"><span>Room</span><input name="room" value="${esc(o.room ?? "")}" autocomplete="off"></label>
+        <div class="field-row">
+          <label class="field"><span>Start</span><input type="time" name="start" value="${o.start}" required></label>
+          <label class="field"><span>End</span><input type="time" name="end" value="${o.end}" required></label>
+        </div>
+      </div>
+      <label class="field"><span>Note <small>optional</small></span><input name="note" value="${esc(o.changeNote ?? "")}" placeholder="Teacher is ill" autocomplete="off"></label>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        ${changed ? '<button type="button" class="ghost" data-reset>Back to timetable</button>' : ""}
+        <button type="button" class="ghost" data-back>Back</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>`,
+    (root) => {
+      const form = $("form", root);
+      let cancelled = !!o.cancelled;
+      const done = async (res, msg) => {
+        await res;
+        await Promise.all([loadOccurrences(), loadTasks()]);
+        render();
+        openOccurrence(id);
+        toast(msg);
+      };
+      form.addEventListener("input", () => showFormError(form, ""));
+      form.addEventListener("click", async (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.cancelled !== undefined) {
+          cancelled = b.dataset.cancelled === "1";
+          for (const x of form.querySelectorAll("[data-cancelled]")) {
+            x.classList.toggle("on", x === b);
+            x.setAttribute("aria-pressed", x === b);
+          }
+          $(".change-fields", form).hidden = cancelled;
+        } else if (b.hasAttribute("data-back")) openOccurrence(id);
+        else if (b.hasAttribute("data-reset")) {
+          try {
+            await done(api(`/api/classes/${encodeURIComponent(id)}/change`, { method: "DELETE" }), "Back to the timetable");
+          } catch (err) {
+            showFormError(form, err.message);
+          }
+        }
+      });
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const el = form.elements;
+        if (!cancelled && (!el.start.value || !el.end.value)) return showFormError(form, "Enter when the class starts and ends.");
+        if (!cancelled && el.start.value >= el.end.value) return showFormError(form, "The class has to end after it starts.");
+        const body = cancelled
+          ? { cancelled: true, note: el.note.value }
+          : { cancelled: false, room: el.room.value, start: el.start.value, end: el.end.value, note: el.note.value };
+        const btn = $('button[type="submit"]', form);
+        btn.disabled = true;
+        try {
+          await done(api(`/api/classes/${encodeURIComponent(id)}/change`, { method: "PUT", body }), cancelled ? "Class cancelled" : "Class changed");
+        } catch (err) {
+          showFormError(form, err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    },
+  );
+}
+
+// ----- subject notes and absence limit -----
+function openSubjectForm(subjectId, occId) {
+  const info = subjectInfo(subjectId);
+  const back = () => (occId && state.occById.has(occId) ? openOccurrence(occId) : closeSheet());
+  openSheet(
+    `${sheetHead(subj(subjectId).short)}
+    <form class="form" novalidate>
+      <label class="field"><span>Notes</span>
+        <textarea name="notes" rows="6" placeholder="Teacher's email, how the grade is made up, what to bring…">${esc(info.notes)}</textarea></label>
+      ${hasMandatory(subjectId) ? `<label class="field"><span>Allowed absences <small>optional</small></span>
+        <input type="number" name="absenceLimit" min="0" max="50" inputmode="numeric" value="${info.absenceLimit ?? ""}" placeholder="2">
+        <small class="hint">How many mandatory classes you can miss. Mark missed classes in the class's sheet.</small></label>` : ""}
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" data-back>Back</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>`,
+    (root) => {
+      const form = $("form", root);
+      form.addEventListener("input", () => showFormError(form, ""));
+      $("[data-back]", form).addEventListener("click", back);
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const body = { notes: form.elements.notes.value, absenceLimit: form.elements.absenceLimit?.value ?? info.absenceLimit };
+        const btn = $('button[type="submit"]', form);
+        btn.disabled = true;
+        try {
+          const res = await api(`/api/subjects/${subjectId}/info`, { method: "PUT", body });
+          state.boot.subjectInfo[subjectId] = res.info;
+          back();
+          toast("Saved");
+        } catch (err) {
+          showFormError(form, err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    },
   );
 }
 
@@ -684,7 +884,7 @@ function openLinkForm(link, subjectId, occId) {
 function upcomingOccurrences(subjectId, kind, includeId) {
   const now = nowLocal().stamp;
   return state.occ
-    .filter((o) => o.subject === subjectId && (o.id === includeId || (`${o.date}T${o.start}` > now && (kind === "exam" || o.kind === "lab"))))
+    .filter((o) => o.subject === subjectId && (o.id === includeId || (!o.cancelled && `${o.date}T${o.start}` > now && (kind === "exam" || o.kind === "lab"))))
     .slice(0, 12);
 }
 
@@ -698,13 +898,13 @@ function openTaskForm(task, preset = {}) {
     subjectId: task?.subjectId ?? preset.subjectId ?? "",
     title: task?.title ?? "",
     notes: task?.notes ?? "",
-    kind: task?.kind ?? "assignment",
+    kind: task?.kind ?? preset.kind ?? "assignment",
     dueType: task ? (task.occurrenceId ? "class" : "date") : "class",
     occurrenceId: task?.occurrenceId ?? preset.occurrenceId ?? "",
     date: task ? dueDate(task) : addDays(nowLocal().date, 7),
-    time: task ? dueTime(task) : "23:59",
+    time: task ? dueTime(task) : preset.kind === "exam" ? "09:00" : "23:59",
     location: task?.location ?? "",
-    offsets: task ? [...task.reminderOffsets] : [...settings.defaults.assignment],
+    offsets: task ? [...task.reminderOffsets] : [...settings.defaults[preset.kind ?? "assignment"]],
     offsetsTouched: !!task,
   };
   const linkedId = task?.occurrenceId ?? preset.occurrenceId;
@@ -941,6 +1141,9 @@ async function notificationsBlock() {
     <div class="sheet-actions left"><button class="primary" data-push="on">${icon.bell}Turn on notifications</button></div>`;
 }
 
+const quarterHours = (from, to) =>
+  Array.from({ length: (to - from) * 4 + 1 }, (_, i) => `${String(from + Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`);
+
 async function openSettings() {
   const s = state.boot.settings;
   const chips = (kind) =>
@@ -958,6 +1161,13 @@ async function openSettings() {
         </div>
         <small class="hint">A notification 15 minutes before the class starts.</small>
       </div>
+      <label class="field"><span>Morning summary</span>
+        <select name="morningSummary">
+          <option value="" ${s.morningSummary ? "" : "selected"}>Off</option>
+          ${quarterHours(5, 11).map((t) => `<option value="${t}" ${t === s.morningSummary ? "selected" : ""}>${t}</option>`).join("")}
+        </select>
+        <small class="hint">Today's classes, cancellations and what's due. Only on days with something on.</small>
+      </label>
     </section>
     <section class="set-block"><h3 class="sheet-sub">Reminders</h3>
       <label class="field"><span>Time of day</span><input type="time" name="reminderTime" value="${s.reminderTime}"></label>
@@ -994,6 +1204,7 @@ function mountSettings(root) {
   };
   root.addEventListener("change", (e) => {
     if (e.target.name === "reminderTime" && e.target.value) save({ reminderTime: e.target.value });
+    if (e.target.name === "morningSummary") save({ morningSummary: e.target.value || null });
   });
   root.addEventListener("click", async (e) => {
     const b = e.target.closest("button");
@@ -1097,7 +1308,24 @@ document.addEventListener("click", async (e) => {
     case "occ":
       return openOccurrence(b.dataset.id);
     case "new-task":
-      return openTaskForm(null, { subjectId: b.dataset.subject, occurrenceId: b.dataset.occ });
+      return openTaskForm(null, { subjectId: b.dataset.subject, occurrenceId: b.dataset.occ, kind: b.dataset.kind });
+    case "change-class":
+      return openChangeForm(b.dataset.id);
+    case "edit-subject":
+      return openSubjectForm(b.dataset.subject, b.dataset.occ);
+    case "absence": {
+      const id = b.dataset.id;
+      const absent = !state.boot.absences.includes(id);
+      try {
+        const res = await api(`/api/classes/${encodeURIComponent(id)}/absence`, { method: "PUT", body: { absent } });
+        state.boot.absences = res.absences;
+        openOccurrence(id);
+        toast(absent ? `Marked as missed. ${absenceLabel(sessionSubject(id))}.` : "No longer marked as missed");
+      } catch (err) {
+        toast(err.message, true);
+      }
+      return;
+    }
     case "new-link":
       return openLinkForm(null, b.dataset.subject, b.dataset.occ);
     case "edit-link": {

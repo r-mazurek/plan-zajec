@@ -1,10 +1,11 @@
 // Runs before `npm run deploy`: checks open tasks in the remote D1 database
 // against data/schedule.json and stops the deploy if an edit to the timetable
 // would unlink a task from its class or leave it at the class's old time.
+// One-off class changes made in the app (class_changes) count as part of the timetable.
 // `npm run check-tasks -- --local` checks the local dev database instead.
 import { execFileSync } from "node:child_process";
 import scheduleData from "../data/schedule.json";
-import { findOccurrence, type Schedule } from "../src/schedule";
+import { applyChange, findOccurrence, type ClassChange, type Schedule } from "../src/schedule";
 
 const schedule = scheduleData as Schedule;
 const where = process.argv.includes("--local") ? "--local" : "--remote";
@@ -16,19 +17,28 @@ interface Row {
   occurrence_id: string;
 }
 
-const out = execFileSync(
-  "npx",
-  [
-    "wrangler", "d1", "execute", "plan-zajec", where, "--json",
-    "--command", "SELECT id, title, due_at, occurrence_id FROM tasks WHERE done = 0 AND occurrence_id IS NOT NULL",
-  ],
-  { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+function query<T>(sql: string): T[] {
+  const out = execFileSync("npx", ["wrangler", "d1", "execute", "plan-zajec", where, "--json", "--command", sql], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return JSON.parse(out)[0].results;
+}
+
+const rows = query<Row>("SELECT id, title, due_at, occurrence_id FROM tasks WHERE done = 0 AND occurrence_id IS NOT NULL");
+const changes = new Map(
+  query<{ occurrence_id: string; cancelled: number; room: string | null; start_time: string | null; end_time: string | null; note: string | null }>(
+    "SELECT * FROM class_changes",
+  ).map((r): [string, ClassChange] => [
+    r.occurrence_id,
+    { occurrenceId: r.occurrence_id, cancelled: !!r.cancelled, room: r.room, start: r.start_time, end: r.end_time, note: r.note },
+  ]),
 );
-const rows: Row[] = JSON.parse(out)[0].results;
 
 const problems: string[] = [];
 for (const t of rows) {
-  const occ = findOccurrence(schedule, t.occurrence_id);
+  const base = findOccurrence(schedule, t.occurrence_id);
+  const occ = base && applyChange(base, changes.get(t.occurrence_id));
   if (!occ) problems.push(`"${t.title}": its class ${t.occurrence_id} is no longer in the timetable`);
   else if (t.due_at !== `${occ.date}T${occ.start}`)
     problems.push(`"${t.title}": due ${t.due_at.replace("T", " ")}, but the class now starts ${occ.date} ${occ.start}`);

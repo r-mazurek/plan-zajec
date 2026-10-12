@@ -7,6 +7,10 @@ Personal class timetable with subject tasks and push reminders. Built for an iPh
 - **Tasks:** assignments or exams, due *at a class* (picked from upcoming classes of that subject) or *on a date*. Each task has its own reminders, e.g. 2 and 1 days before, delivered at the configured time of day (default 18:00).
 - **Links:** each subject keeps its own links (e.g. the GitHub repo with the exercises), shown with the site's favicon in the class sheet.
 - **Notifications:** Web Push from a Cloudflare Worker cron (every 15 minutes).
+- **Class changes:** cancel a single class or change its room or time from its sheet, without touching the timetable. Tasks due at that class move with it.
+- **Absences and notes:** mark missed mandatory classes and see how many are left against the limit you set per subject; each subject also has free-text notes.
+- **Morning summary:** at a chosen time (Settings, default 07:00), the day's classes, cancellations and what's due. Only on days with something on.
+- **Exams:** a tab in Tasks with the exam session dates and a countdown to each exam.
 - **Class alerts:** a notification 15 minutes before each class ("Mandatory lab … starts in 15 minutes"). In Settings: all classes, mandatory only, or off.
 
 <p>
@@ -25,7 +29,7 @@ src/push.ts        Web Push: VAPID (RFC 8292) + aes128gcm payload encryption (RF
 src/auth.ts        Cloudflare Access JWT check for /api/*
 data/schedule.json the timetable — the file to edit when the plan changes
 scripts/           check-tasks.ts (open tasks vs. the timetable, runs before deploy), vapid.mjs (key pair)
-migrations/        D1 schema (tasks, reminders, push subscriptions, settings, subject links, sent class alerts)
+migrations/        D1 schema (tasks, reminders, push subscriptions, settings, subject links, sent class alerts, class changes, absences, subject notes, sent summaries)
 ```
 
 Tasks, reminders, links and settings live in D1. Favicons are fetched through the Worker (`/api/favicon`, from Google's favicon service) so they're cached for offline use. The timetable lives in `data/schedule.json` and is bundled into the Worker, so a timetable change is a commit and a deploy.
@@ -38,6 +42,8 @@ Tasks, reminders, links and settings live in D1. Favicons are fetched through th
 - `subjects`: `id`, `abbr` (shown in the narrow week view), `name`, `short`.
 - `sessions`: one per recurring class. `day` is 1 = Monday … 5 = Friday. Set `"every": 2` and an `anchor` date for every-other-week classes, `"remote": true` for online ones, and `"mandatory": false` to show a class striped.
 - `pending`: subjects whose times aren't known yet.
+
+For a one-off change (a cancelled class, a different room or time on one day), use **Change this class** in the app instead of editing the file.
 
 Changing a session's `id` or day orphans tasks that were due at its classes (they keep their date and time but lose the link to the class), and changing its start time leaves them at the old time. `npm run deploy` checks for this first (see below) and stops if any open task would be affected.
 

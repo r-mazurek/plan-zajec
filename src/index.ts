@@ -7,13 +7,26 @@ import {
   classesStartingSoon,
   DEFAULT_SETTINGS,
   humanDate,
+  isQuarterHour,
   planReminders,
   relativeDay,
+  summaryMessage,
   type Settings,
   type TaskKind,
 } from "./reminders";
-import { dayNotes, findOccurrence, occurrences, semesterWeek, swapNotes, type Schedule } from "./schedule";
-import { daysBetween, isDate, isLocalDateTime, isTime, splitLocal, utcToZoned, zonedToUtc } from "./time";
+import {
+  applyChange,
+  applyChanges,
+  dayNotes,
+  findOccurrence,
+  occurrences,
+  semesterWeek,
+  swapNotes,
+  type ClassChange,
+  type Occurrence,
+  type Schedule,
+} from "./schedule";
+import { addDays, daysBetween, isDate, isLocalDateTime, isTime, splitLocal, utcToZoned, zonedToUtc } from "./time";
 
 export interface Env {
   DB: D1Database;
@@ -59,6 +72,7 @@ async function getSettings(db: D1Database): Promise<Settings> {
     reminderTime: saved.reminderTime ?? DEFAULT_SETTINGS.reminderTime,
     defaults: { ...DEFAULT_SETTINGS.defaults, ...saved.defaults },
     classAlerts: saved.classAlerts ?? DEFAULT_SETTINGS.classAlerts,
+    morningSummary: saved.morningSummary === undefined ? DEFAULT_SETTINGS.morningSummary : saved.morningSummary,
   };
 }
 
@@ -69,6 +83,48 @@ function parseOffsets(v: unknown): number[] {
     throw bad("Each reminder must be a whole number of days between 0 and 60.");
   }
   return [...new Set(out)].sort((a, b) => b - a);
+}
+
+// ---------- class changes ----------
+
+interface ChangeRow {
+  occurrence_id: string;
+  date: string;
+  cancelled: number;
+  room: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  note: string | null;
+}
+
+const toChange = (r: ChangeRow): ClassChange => ({
+  occurrenceId: r.occurrence_id,
+  cancelled: !!r.cancelled,
+  room: r.room,
+  start: r.start_time,
+  end: r.end_time,
+  note: r.note,
+});
+
+async function loadChanges(db: D1Database, from: string, to: string): Promise<Map<string, ClassChange>> {
+  const { results } = await db
+    .prepare("SELECT * FROM class_changes WHERE date BETWEEN ? AND ?")
+    .bind(from, to)
+    .all<ChangeRow>();
+  return new Map(results.map((r) => [r.occurrence_id, toChange(r)]));
+}
+
+/** Classes in a date range, with the one-off changes made in the app. */
+async function classesBetween(db: D1Database, from: string, to: string): Promise<Occurrence[]> {
+  return applyChanges(occurrences(schedule, from, to), await loadChanges(db, from, to));
+}
+
+/** One class by id, with its change applied; null if the timetable has no such class. */
+async function classById(db: D1Database, id: string): Promise<Occurrence | null> {
+  const occ = findOccurrence(schedule, id);
+  if (!occ) return null;
+  const row = await db.prepare("SELECT * FROM class_changes WHERE occurrence_id = ?").bind(id).first<ChangeRow>();
+  return applyChange(occ, row ? toChange(row) : undefined);
 }
 
 // ---------- tasks ----------
@@ -132,10 +188,13 @@ async function loadTasks(db: D1Database, where: string, ...params: unknown[]) {
 }
 
 /** Resolves the `due` part of a request into a concrete local date-time (+ class link). */
-function resolveDue(due: unknown): { dueAt: string; occurrenceId: string | null; location: string | null } {
+async function resolveDue(
+  db: D1Database,
+  due: unknown,
+): Promise<{ dueAt: string; occurrenceId: string | null; location: string | null }> {
   const d = due as { type?: string; occurrenceId?: string; at?: string } | undefined;
   if (d?.type === "class") {
-    const occ = d.occurrenceId ? findOccurrence(schedule, d.occurrenceId) : null;
+    const occ = d.occurrenceId ? await classById(db, d.occurrenceId) : null;
     if (!occ) throw bad("That class doesn't take place on that day. Pick another class.");
     return { dueAt: `${occ.date}T${occ.start}`, occurrenceId: occ.id, location: occ.room ?? null };
   }
@@ -178,17 +237,19 @@ app.get("/api/bootstrap", async (c) => {
     pending: schedule.pending,
     settings: await getSettings(c.env.DB),
     links: await loadLinks(c.env.DB),
+    absences: await loadAbsences(c.env.DB),
+    subjectInfo: await loadSubjectInfo(c.env.DB),
     vapidPublicKey: c.env.VAPID_PUBLIC_KEY ?? null,
   });
 });
 
-app.get("/api/occurrences", (c) => {
+app.get("/api/occurrences", async (c) => {
   const from = c.req.query("from");
   const to = c.req.query("to");
   if (!isDate(from) || !isDate(to)) throw bad("Pass from and to as YYYY-MM-DD.");
   if (to < from || daysBetween(from, to) > 200) throw bad("The date range must be between 0 and 200 days.");
   return c.json({
-    occurrences: occurrences(schedule, from, to),
+    occurrences: await classesBetween(c.env.DB, from, to),
     dayNotes: dayNotes(schedule, from, to),
     swaps: swapNotes(schedule, from, to),
   });
@@ -206,7 +267,7 @@ app.post("/api/tasks", async (c) => {
   const title = String(body.title ?? "").trim();
   if (!title) throw bad("Give the task a title.");
   const kind: TaskKind = body.kind === "exam" ? "exam" : "assignment";
-  const due = resolveDue(body.due);
+  const due = await resolveDue(c.env.DB, body.due);
   const settings = await getSettings(c.env.DB);
   const offsets = body.reminderOffsets === undefined ? settings.defaults[kind] : parseOffsets(body.reminderOffsets);
   const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : due.location;
@@ -243,7 +304,7 @@ app.patch("/api/tasks/:id", async (c) => {
   if (body.notes !== undefined) next.notes = String(body.notes).trim() || null;
   if (body.kind !== undefined) next.kind = body.kind === "exam" ? "exam" : "assignment";
   if (body.due !== undefined) {
-    const due = resolveDue(body.due);
+    const due = await resolveDue(c.env.DB, body.due);
     next.due_at = due.dueAt;
     next.occurrence_id = due.occurrenceId;
     if (body.location === undefined) next.location = due.location;
@@ -287,9 +348,13 @@ app.put("/api/settings", async (c) => {
       exam: body.defaults?.exam !== undefined ? parseOffsets(body.defaults.exam) : current.defaults.exam,
     },
     classAlerts: body.classAlerts ?? current.classAlerts,
+    morningSummary: body.morningSummary !== undefined ? body.morningSummary : current.morningSummary,
   };
   if (!isTime(next.reminderTime)) throw bad("Reminder time must look like 18:00.");
   if (!CLASS_ALERT_MODES.includes(next.classAlerts)) throw bad("Choose which classes to be notified about.");
+  if (next.morningSummary !== null && !isQuarterHour(String(next.morningSummary))) {
+    throw bad("The morning summary time must be on a quarter hour, like 07:00 or 07:15.");
+  }
   await c.env.DB.prepare(
     "INSERT INTO settings (key, value) VALUES ('settings', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   )
@@ -300,6 +365,127 @@ app.put("/api/settings", async (c) => {
     for (const t of results) await rescheduleReminders(c.env.DB, t.id);
   }
   return c.json({ settings: next });
+});
+
+// ---------- class changes, absences, subject notes ----------
+
+function optionalTime(v: unknown, label: string): string | null {
+  if (v === undefined || v === null || v === "") return null;
+  if (!isTime(v)) throw bad(`${label} must look like 14:00.`);
+  return v as string;
+}
+
+/** Moves open tasks due at a class along with a change to its start time or room. */
+async function syncClassTasks(db: D1Database, before: Occurrence, after: Occurrence) {
+  if (before.start === after.start && before.room === after.room) return;
+  const { results } = await db
+    .prepare("SELECT id, location FROM tasks WHERE occurrence_id = ? AND done = 0")
+    .bind(after.id)
+    .all<{ id: string; location: string | null }>();
+  for (const t of results) {
+    // Only follow the room if the task still has the class's room (not one typed in for an exam).
+    const location = (t.location ?? "") === (before.room ?? "") ? (after.room ?? null) : t.location;
+    await db
+      .prepare("UPDATE tasks SET due_at = ?, location = ?, updated_at = ? WHERE id = ?")
+      .bind(`${after.date}T${after.start}`, location, Date.now(), t.id)
+      .run();
+    if (before.start !== after.start) await rescheduleReminders(db, t.id);
+  }
+}
+
+app.put("/api/classes/:id/change", async (c) => {
+  const id = c.req.param("id");
+  const base = findOccurrence(schedule, id);
+  if (!base) return c.json({ error: "That class isn't in the timetable." }, 404);
+  const before = (await classById(c.env.DB, id))!;
+  const body = await c.req.json().catch(() => ({}));
+  const room = String(body.room ?? "").trim().slice(0, 40);
+  const start = optionalTime(body.start, "Start");
+  const end = optionalTime(body.end, "End");
+  if ((start ?? base.start) >= (end ?? base.end)) throw bad("The class has to end after it starts.");
+  const row = {
+    cancelled: body.cancelled ? 1 : 0,
+    room: room && room !== base.room ? room : null,
+    start_time: start && start !== base.start ? start : null,
+    end_time: end && end !== base.end ? end : null,
+    note: String(body.note ?? "").trim().slice(0, 200) || null,
+  };
+  if (!row.cancelled && !row.room && !row.start_time && !row.end_time && !row.note) {
+    await c.env.DB.prepare("DELETE FROM class_changes WHERE occurrence_id = ?").bind(id).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO class_changes (occurrence_id, date, cancelled, room, start_time, end_time, note, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(occurrence_id) DO UPDATE SET cancelled = excluded.cancelled, room = excluded.room,
+         start_time = excluded.start_time, end_time = excluded.end_time, note = excluded.note, updated_at = excluded.updated_at`,
+    )
+      .bind(id, base.date, row.cancelled, row.room, row.start_time, row.end_time, row.note, Date.now())
+      .run();
+  }
+  const after = (await classById(c.env.DB, id))!;
+  await syncClassTasks(c.env.DB, before, after);
+  return c.json({ occurrence: after });
+});
+
+app.delete("/api/classes/:id/change", async (c) => {
+  const id = c.req.param("id");
+  const before = await classById(c.env.DB, id);
+  if (!before) return c.json({ error: "That class isn't in the timetable." }, 404);
+  await c.env.DB.prepare("DELETE FROM class_changes WHERE occurrence_id = ?").bind(id).run();
+  const after = findOccurrence(schedule, id)!;
+  await syncClassTasks(c.env.DB, before, after);
+  return c.json({ occurrence: after });
+});
+
+async function loadAbsences(db: D1Database): Promise<string[]> {
+  const { results } = await db.prepare("SELECT occurrence_id FROM absences").all<{ occurrence_id: string }>();
+  return results.map((r) => r.occurrence_id);
+}
+
+app.put("/api/classes/:id/absence", async (c) => {
+  const id = c.req.param("id");
+  const occ = findOccurrence(schedule, id);
+  if (!occ) return c.json({ error: "That class isn't in the timetable." }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (body.absent) {
+    await c.env.DB.prepare("INSERT OR IGNORE INTO absences (occurrence_id, subject_id, created_at) VALUES (?, ?, ?)")
+      .bind(id, occ.subject, Date.now())
+      .run();
+  } else {
+    await c.env.DB.prepare("DELETE FROM absences WHERE occurrence_id = ?").bind(id).run();
+  }
+  return c.json({ absences: await loadAbsences(c.env.DB) });
+});
+
+interface SubjectInfo {
+  notes: string;
+  absenceLimit: number | null;
+}
+
+async function loadSubjectInfo(db: D1Database): Promise<Record<string, SubjectInfo>> {
+  const { results } = await db
+    .prepare("SELECT subject_id, notes, absence_limit FROM subject_info")
+    .all<{ subject_id: string; notes: string | null; absence_limit: number | null }>();
+  return Object.fromEntries(results.map((r) => [r.subject_id, { notes: r.notes ?? "", absenceLimit: r.absence_limit }]));
+}
+
+app.put("/api/subjects/:id/info", async (c) => {
+  const id = c.req.param("id");
+  if (!subjectById.has(id)) return c.json({ error: "That subject isn't in the timetable." }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  const notes = String(body.notes ?? "").trim().slice(0, 4000) || null;
+  let limit: number | null = null;
+  if (body.absenceLimit !== undefined && body.absenceLimit !== null && body.absenceLimit !== "") {
+    limit = Number(body.absenceLimit);
+    if (!Number.isInteger(limit) || limit < 0 || limit > 50) throw bad("Allowed absences must be a whole number between 0 and 50.");
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO subject_info (subject_id, notes, absence_limit, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(subject_id) DO UPDATE SET notes = excluded.notes, absence_limit = excluded.absence_limit, updated_at = excluded.updated_at`,
+  )
+    .bind(id, notes, limit, Date.now())
+    .run();
+  return c.json({ info: { notes: notes ?? "", absenceLimit: limit } });
 });
 
 // ---------- subject links ----------
@@ -475,7 +661,7 @@ export async function runDueReminders(env: Env, now = Date.now()) {
     const overdue = zonedToUtc(dueDate, dueTime, TZ) <= now;
     if (!overdue && keys) {
       const subject = subjectById.get(row.subject_id);
-      const occ = row.occurrence_id ? findOccurrence(schedule, row.occurrence_id) : null;
+      const occ = row.occurrence_id ? await classById(env.DB, row.occurrence_id) : null;
       const when = relativeDay(dueDate, now, TZ);
       const at = occ
         ? `${occ.kind === "lab" ? "lab" : "lecture"} ${humanDate(dueDate)}, ${dueTime}`
@@ -499,7 +685,9 @@ export async function runClassAlerts(env: Env, now = Date.now()) {
   if (!keys) return 0;
   const settings = await getSettings(env.DB);
   let sent = 0;
-  for (const o of classesStartingSoon(schedule, settings.classAlerts, now, TZ)) {
+  const today = utcToZoned(now, TZ).date;
+  const soon = classesStartingSoon(await classesBetween(env.DB, today, addDays(today, 1)), settings.classAlerts, now, TZ);
+  for (const o of soon) {
     // Claim the class first, so a retried run doesn't notify twice.
     const claim = await env.DB.prepare("INSERT OR IGNORE INTO class_alerts (occurrence_id, sent_at) VALUES (?, ?)")
       .bind(o.id, now)
@@ -519,12 +707,44 @@ export async function runClassAlerts(env: Env, now = Date.now()) {
   return sent;
 }
 
+// ---------- morning summary cron ----------
+
+/**
+ * Sends the day's summary on the first run at or after the chosen time (within the hour,
+ * so a missed run still sends it, but moving the time to earlier in the day doesn't).
+ */
+export async function runMorningSummary(env: Env, now = Date.now()) {
+  const keys = vapid(env);
+  const settings = await getSettings(env.DB);
+  if (!keys || !settings.morningSummary) return false;
+  const { date, time } = utcToZoned(now, TZ);
+  const from = zonedToUtc(date, settings.morningSummary, TZ);
+  if (now < from || now >= from + 3_600_000) return false;
+  if (await env.DB.prepare("SELECT 1 FROM daily_summaries WHERE date = ?").bind(date).first()) return false;
+
+  const classes = await classesBetween(env.DB, date, date);
+  const { results: due } = await env.DB.prepare(
+    "SELECT title, kind, due_at AS dueAt FROM tasks WHERE done = 0 AND due_at LIKE ? AND due_at >= ? ORDER BY due_at",
+  )
+    .bind(`${date}T%`, `${date}T${time}`)
+    .all<{ title: string; kind: TaskKind; dueAt: string }>();
+  const msg = summaryMessage(classes, due, (id) => subjectById.get(id)?.short ?? id);
+  if (!msg) return false;
+
+  const claim = await env.DB.prepare("INSERT OR IGNORE INTO daily_summaries (date, sent_at) VALUES (?, ?)").bind(date, now).run();
+  if (!claim.meta.changes) return false;
+  await broadcast(env.DB, keys, { ...msg, url: "/", tag: `summary-${date}` });
+  await env.DB.prepare("DELETE FROM daily_summaries WHERE date < ?").bind(addDays(date, -30)).run();
+  return true;
+}
+
 const handler: ExportedHandler<Env> = {
   fetch: app.fetch,
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runDueReminders(env));
     // The scheduled time is exactly on the quarter hour, unlike Date.now().
     ctx.waitUntil(runClassAlerts(env, event.scheduledTime));
+    ctx.waitUntil(runMorningSummary(env, event.scheduledTime));
   },
 };
 

@@ -60,6 +60,41 @@ export interface Occurrence {
   group?: string;
   mandatory: boolean;
   biweekly: boolean;
+  /** Set when a one-off change from the app cancels this class. */
+  cancelled?: boolean;
+  /** Why the class changed, e.g. "Moved because of the rector's hours". */
+  changeNote?: string;
+  /** Timetable values that a one-off change replaced. */
+  was?: { room?: string; start?: string; end?: string };
+}
+
+/** A one-off change to a single class, made in the app (stored in D1, not in schedule.json). */
+export interface ClassChange {
+  occurrenceId: string;
+  cancelled: boolean;
+  room: string | null;
+  start: string | null;
+  end: string | null;
+  note: string | null;
+}
+
+export function applyChange(o: Occurrence, c: ClassChange | undefined): Occurrence {
+  if (!c) return o;
+  const out: Occurrence = { ...o, was: {} };
+  if (c.cancelled) out.cancelled = true;
+  if (c.note) out.changeNote = c.note;
+  if (c.room !== null && c.room !== o.room) [out.room, out.was!.room] = [c.room, o.room ?? ""];
+  if (c.start !== null && c.start !== o.start) [out.start, out.was!.start] = [c.start, o.start];
+  if (c.end !== null && c.end !== o.end) [out.end, out.was!.end] = [c.end, o.end];
+  if (!Object.keys(out.was!).length) delete out.was;
+  return out;
+}
+
+export function applyChanges(list: Occurrence[], changes: Map<string, ClassChange>): Occurrence[] {
+  if (!changes.size) return list;
+  return list
+    .map((o) => applyChange(o, changes.get(o.id)))
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
 }
 
 export interface DayNote {

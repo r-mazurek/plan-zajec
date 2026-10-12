@@ -4,8 +4,8 @@ import scheduleData from "../data/schedule.json";
 import { verifyAccess } from "../src/auth";
 import { parseLinkUrl } from "../src/index";
 import { b64urlDecode, b64urlEncode, encryptPayload, vapidAuthorization } from "../src/push";
-import { classesStartingSoon, planReminders, relativeDay } from "../src/reminders";
-import { dayNotes, occurrences, semesterWeek, type Schedule } from "../src/schedule";
+import { classesStartingSoon, planReminders, relativeDay, summaryMessage } from "../src/reminders";
+import { applyChange, applyChanges, dayNotes, occurrences, semesterWeek, type Schedule } from "../src/schedule";
 import { utcToZoned, weekday, zonedToUtc } from "../src/time";
 
 const s = scheduleData as Schedule;
@@ -153,14 +153,60 @@ describe("class alerts", () => {
 
   it("picks classes starting in exactly 15 minutes, once per quarter-hour run", () => {
     const o = pick(true);
-    expect(classesStartingSoon(sched, "all", at(o, 15), "Europe/Warsaw").map((x) => x.id)).toContain(o.id);
-    expect(classesStartingSoon(sched, "all", at(o, 30), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
-    expect(classesStartingSoon(sched, "all", at(o, 0), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
+    expect(classesStartingSoon(all, "all", at(o, 15), "Europe/Warsaw").map((x) => x.id)).toContain(o.id);
+    expect(classesStartingSoon(all, "all", at(o, 30), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
+    expect(classesStartingSoon(all, "all", at(o, 0), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
   });
   it("skips non-mandatory classes in mandatory-only mode and everything when off", () => {
     const opt = pick(false);
-    expect(classesStartingSoon(sched, "all", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).toContain(opt.id);
-    expect(classesStartingSoon(sched, "mandatory", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).not.toContain(opt.id);
-    expect(classesStartingSoon(sched, "off", at(pick(true), 15), "Europe/Warsaw")).toEqual([]);
+    expect(classesStartingSoon(all, "all", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).toContain(opt.id);
+    expect(classesStartingSoon(all, "mandatory", at(opt, 15), "Europe/Warsaw").map((x) => x.id)).not.toContain(opt.id);
+    expect(classesStartingSoon(all, "off", at(pick(true), 15), "Europe/Warsaw")).toEqual([]);
+  });
+  it("skips cancelled classes", () => {
+    const o = pick(true);
+    const list = applyChanges(all, new Map([[o.id, { occurrenceId: o.id, cancelled: true, room: null, start: null, end: null, note: null }]]));
+    expect(classesStartingSoon(list, "all", at(o, 15), "Europe/Warsaw").map((x) => x.id)).not.toContain(o.id);
+  });
+});
+
+describe("class changes", () => {
+  const sched = scheduleData as Schedule;
+  const o = occurrences(sched, sched.semester.classesFrom, sched.semester.classesTo).find((x) => x.room)!;
+  const none = { occurrenceId: o.id, cancelled: false, room: null, start: null, end: null, note: null };
+
+  it("replaces the room and time and remembers the timetable's values", () => {
+    const c = applyChange(o, { ...none, room: "2.14", start: "15:00", end: "17:00" });
+    expect([c.room, c.start, c.end]).toEqual(["2.14", "15:00", "17:00"]);
+    expect(c.was).toEqual({ room: o.room, start: o.start, end: o.end });
+  });
+  it("leaves fields that weren't changed alone", () => {
+    const c = applyChange(o, { ...none, cancelled: true, note: "Teacher is ill" });
+    expect(c).toMatchObject({ cancelled: true, changeNote: "Teacher is ill", room: o.room, start: o.start });
+    expect(c.was).toBeUndefined();
+  });
+});
+
+describe("morning summary", () => {
+  const sched = scheduleData as Schedule;
+  const all = occurrences(sched, sched.semester.classesFrom, sched.semester.classesTo);
+  const day = all.find((o) => all.filter((x) => x.date === o.date).length >= 2)!.date;
+  const classes = all.filter((o) => o.date === day);
+  const name = (id: string) => id.toUpperCase();
+
+  it("lists the day's span, the first class and what's due", () => {
+    const msg = summaryMessage(classes, [{ title: "Lab report 3", kind: "assignment", dueAt: `${day}T23:59` }], name)!;
+    expect(msg.title).toBe(`Today: ${classes.length} classes, ${classes[0].start}–${classes.at(-1)!.end}`);
+    expect(msg.body).toContain(`First: ${name(classes[0].subject)}`);
+    expect(msg.body).toContain("Due today: Lab report 3");
+  });
+  it("mentions cancelled classes and leaves them out of the count", () => {
+    const [first, ...rest] = classes;
+    const msg = summaryMessage([{ ...first, cancelled: true }, ...rest], [], name)!;
+    expect(msg.title).toContain(`${rest.length} class`);
+    expect(msg.body).toContain(`Cancelled: ${name(first.subject)}`);
+  });
+  it("stays quiet on an empty day", () => {
+    expect(summaryMessage([], [], name)).toBeNull();
   });
 });
