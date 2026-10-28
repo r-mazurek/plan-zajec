@@ -644,7 +644,7 @@ function openOccurrence(id) {
   const rows = [
     ["When", `${WD_LONG[weekday(o.date) - 1]} ${dayNum(o.date)} ${MON_LONG[Number(o.date.slice(5, 7)) - 1]}, ${o.start}–${o.end}`],
     ["Type", `${o.kind === "lab" ? "Lab" : "Lecture"}${o.remote ? ", remote" : ""}${o.biweekly ? ", every other week" : ""}`],
-    ["Room", o.room],
+    ["Room", o.room || (o.remote ? "" : "Not set")],
     ["Group", o.group],
     ["Teacher", o.teacher],
     ["Attendance", o.mandatory ? "Mandatory" : "Not mandatory"],
@@ -655,9 +655,8 @@ function openOccurrence(id) {
     `${sheetHead(s.name)}
     <div class="occ-band ${o.remote ? "k-remote" : `k-${o.kind}`} ${o.mandatory ? "" : "optional"}"></div>
     ${changeNotice(o)}
-    <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${k === "Absences" && limitHit ? "warn" : ""}">${esc(v)}</dd>`).join("")}</dl>
+    <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${k === "Absences" && limitHit ? "warn" : ""}">${esc(v)}${k === "Room" && !o.remote && !o.cancelled ? `<button class="icon-btn small" data-action="change-room" data-id="${esc(id)}" aria-label="Change room">${icon.pencil}</button>` : ""}</dd>`).join("")}</dl>
     <div class="sheet-actions left">
-      ${o.remote || o.cancelled ? "" : `<button class="ghost" data-action="change-room" data-id="${esc(id)}">${icon.pencil}Change room</button>`}
       <button class="ghost" data-action="change-class" data-id="${esc(id)}">${icon.pencil}${o.cancelled || o.was || o.changeNote ? "Edit change" : "Change this class"}</button>
       ${o.mandatory && started && !o.cancelled ? `<button class="ghost ${missed ? "on" : ""}" data-action="absence" data-id="${esc(id)}" aria-pressed="${missed}">${missed ? `${icon.check}Missed` : "Mark as missed"}</button>` : ""}
     </div>

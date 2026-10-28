@@ -373,6 +373,8 @@ p { margin: 0; }
 .facts dt { color: var(--muted); font-size: 14px; }
 .facts dd { margin: 0; font-weight: 500; }
 .facts dd.warn { color: var(--red); }
+.facts dd .icon-btn { width: 28px; height: 24px; margin: -4px 0 -4px 6px; vertical-align: middle; color: var(--muted); }
+.facts dd .icon-btn svg { width: 16px; height: 16px; }
 .occ-notice { margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
 .occ-notice b { margin-right: 4px; }
 .occ-notice.is-cancelled { background: var(--red-soft); color: var(--red); }
