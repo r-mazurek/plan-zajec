@@ -78,6 +78,12 @@ export interface ClassChange {
   note: string | null;
 }
 
+/** The timetable with rooms changed in the app (for every week of a session). */
+export function withRooms(s: Schedule, rooms: Map<string, string>): Schedule {
+  if (!rooms.size) return s;
+  return { ...s, sessions: s.sessions.map((x) => (rooms.has(x.id) ? { ...x, room: rooms.get(x.id) } : x)) };
+}
+
 export function applyChange(o: Occurrence, c: ClassChange | undefined): Occurrence {
   if (!c) return o;
   const out: Occurrence = { ...o, was: {} };

@@ -657,6 +657,7 @@ function openOccurrence(id) {
     ${changeNotice(o)}
     <dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${k === "Absences" && limitHit ? "warn" : ""}">${esc(v)}</dd>`).join("")}</dl>
     <div class="sheet-actions left">
+      ${o.remote || o.cancelled ? "" : `<button class="ghost" data-action="change-room" data-id="${esc(id)}">${icon.pencil}Change room</button>`}
       <button class="ghost" data-action="change-class" data-id="${esc(id)}">${icon.pencil}${o.cancelled || o.was || o.changeNote ? "Edit change" : "Change this class"}</button>
       ${o.mandatory && started && !o.cancelled ? `<button class="ghost ${missed ? "on" : ""}" data-action="absence" data-id="${esc(id)}" aria-pressed="${missed}">${missed ? `${icon.check}Missed` : "Mark as missed"}</button>` : ""}
     </div>
@@ -743,6 +744,73 @@ function openChangeForm(id) {
         btn.disabled = true;
         try {
           await done(api(`/api/classes/${encodeURIComponent(id)}/change`, { method: "PUT", body }), cancelled ? "Class cancelled" : "Class changed");
+        } catch (err) {
+          showFormError(form, err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    },
+  );
+}
+
+// ----- room, for one class or every week -----
+function openRoomForm(id) {
+  const o = state.occById.get(id);
+  if (!o) return;
+  const s = subj(o.subject);
+  let everyWeek = false;
+  openSheet(
+    `${sheetHead("Change room")}
+    <p class="muted">${esc(`${s.short}, ${kindLabel(o).toLowerCase()} ${human(o.date)}.`)}</p>
+    <form class="form" novalidate>
+      <label class="field"><span>Room</span><input name="room" value="${esc(o.room ?? "")}" placeholder="1.14" autocomplete="off" required></label>
+      <div class="seg wide-seg" role="group" aria-label="Which classes move to this room?">
+        <button type="button" class="on" data-every="0" aria-pressed="true">Only this class</button>
+        <button type="button" data-every="1" aria-pressed="false">Every week</button>
+      </div>
+      <small class="hint" data-scope-hint>Only ${esc(human(o.date))} changes.</small>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" data-back>Back</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>`,
+    (root) => {
+      const form = $("form", root);
+      form.addEventListener("input", () => showFormError(form, ""));
+      form.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.every !== undefined) {
+          everyWeek = b.dataset.every === "1";
+          for (const x of form.querySelectorAll("[data-every]")) {
+            x.classList.toggle("on", x === b);
+            x.setAttribute("aria-pressed", x === b);
+          }
+          $("[data-scope-hint]", form).textContent = everyWeek
+            ? `Changes the timetable: every ${kindLabel(o).toLowerCase()} of ${s.short} uses this room.`
+            : `Only ${human(o.date)} changes.`;
+        } else if (b.hasAttribute("data-back")) openOccurrence(id);
+      });
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const room = form.elements.room.value.trim();
+        if (!room) return showFormError(form, "Enter the room.");
+        const btn = $('button[type="submit"]', form);
+        btn.disabled = true;
+        try {
+          if (everyWeek) {
+            const res = await api(`/api/sessions/${encodeURIComponent(o.sessionId)}/room`, { method: "PUT", body: { room } });
+            state.boot.sessions = res.sessions;
+          } else {
+            const body = { cancelled: false, room, start: o.start, end: o.end, note: o.changeNote ?? "" };
+            await api(`/api/classes/${encodeURIComponent(id)}/change`, { method: "PUT", body });
+          }
+          await Promise.all([loadOccurrences(), loadTasks()]);
+          render();
+          openOccurrence(id);
+          toast(everyWeek ? "Room changed in the timetable" : "Room changed for this class");
         } catch (err) {
           showFormError(form, err.message);
         } finally {
@@ -1311,6 +1379,8 @@ document.addEventListener("click", async (e) => {
       return openTaskForm(null, { subjectId: b.dataset.subject, occurrenceId: b.dataset.occ, kind: b.dataset.kind });
     case "change-class":
       return openChangeForm(b.dataset.id);
+    case "change-room":
+      return openRoomForm(b.dataset.id);
     case "edit-subject":
       return openSubjectForm(b.dataset.subject, b.dataset.occ);
     case "absence": {

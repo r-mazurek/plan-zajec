@@ -5,7 +5,7 @@ import { verifyAccess } from "../src/auth";
 import { parseLinkUrl } from "../src/index";
 import { b64urlDecode, b64urlEncode, encryptPayload, vapidAuthorization } from "../src/push";
 import { classesStartingSoon, planReminders, relativeDay, summaryMessage } from "../src/reminders";
-import { applyChange, applyChanges, dayNotes, occurrences, semesterWeek, type Schedule } from "../src/schedule";
+import { applyChange, applyChanges, dayNotes, occurrences, semesterWeek, withRooms, type Schedule } from "../src/schedule";
 import { utcToZoned, weekday, zonedToUtc } from "../src/time";
 
 const s = scheduleData as Schedule;
@@ -46,6 +46,14 @@ describe("schedule", () => {
   it("runs Monday classes on Thu 28 Jan and Wednesday classes on Fri 29 Jan", () => {
     expect(occurrences(s, "2027-01-28", "2027-01-28").map((o) => o.sessionId)).toEqual(["pw-w", "wo-w"]);
     expect(occurrences(s, "2027-01-29", "2027-01-29").map((o) => o.sessionId)).toEqual(["apoc-l", "apoc-w", "apsi-l"]);
+  });
+  it("uses rooms changed for every week, keeping the rest of the timetable", () => {
+    const moved = withRooms(s, new Map([["pw-w", "9.99"]]));
+    const week = occurrences(moved, "2026-10-19", "2026-10-25");
+    expect(week.filter((o) => o.sessionId === "pw-w").map((o) => o.room)).toEqual(["9.99"]);
+    const other = (x: typeof week) => x.filter((o) => o.sessionId !== "pw-w").map((o) => o.room);
+    expect(other(week)).toEqual(other(occurrences(s, "2026-10-19", "2026-10-25")));
+    expect(withRooms(s, new Map())).toBe(s);
   });
   it("counts semester weeks", () => {
     expect(semesterWeek(s, "2026-10-01")).toBe(1);

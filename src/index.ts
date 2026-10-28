@@ -22,6 +22,7 @@ import {
   occurrences,
   semesterWeek,
   swapNotes,
+  withRooms,
   type ClassChange,
   type Occurrence,
   type Schedule,
@@ -85,6 +86,18 @@ function parseOffsets(v: unknown): number[] {
   return [...new Set(out)].sort((a, b) => b - a);
 }
 
+// ---------- timetable rooms ----------
+
+async function loadRooms(db: D1Database): Promise<Map<string, string>> {
+  const { results } = await db.prepare("SELECT session_id, room FROM session_rooms").all<{ session_id: string; room: string }>();
+  return new Map(results.map((r) => [r.session_id, r.room]));
+}
+
+/** The timetable with the rooms changed in the app. */
+async function timetable(db: D1Database): Promise<Schedule> {
+  return withRooms(schedule, await loadRooms(db));
+}
+
 // ---------- class changes ----------
 
 interface ChangeRow {
@@ -116,12 +129,12 @@ async function loadChanges(db: D1Database, from: string, to: string): Promise<Ma
 
 /** Classes in a date range, with the one-off changes made in the app. */
 async function classesBetween(db: D1Database, from: string, to: string): Promise<Occurrence[]> {
-  return applyChanges(occurrences(schedule, from, to), await loadChanges(db, from, to));
+  return applyChanges(occurrences(await timetable(db), from, to), await loadChanges(db, from, to));
 }
 
 /** One class by id, with its change applied; null if the timetable has no such class. */
 async function classById(db: D1Database, id: string): Promise<Occurrence | null> {
-  const occ = findOccurrence(schedule, id);
+  const occ = findOccurrence(await timetable(db), id);
   if (!occ) return null;
   const row = await db.prepare("SELECT * FROM class_changes WHERE occurrence_id = ?").bind(id).first<ChangeRow>();
   return applyChange(occ, row ? toChange(row) : undefined);
@@ -233,7 +246,7 @@ app.get("/api/bootstrap", async (c) => {
     week: semesterWeek(schedule, today),
     semester: schedule.semester,
     subjects: schedule.subjects,
-    sessions: schedule.sessions,
+    sessions: (await timetable(c.env.DB)).sessions,
     pending: schedule.pending,
     settings: await getSettings(c.env.DB),
     links: await loadLinks(c.env.DB),
@@ -395,7 +408,7 @@ async function syncClassTasks(db: D1Database, before: Occurrence, after: Occurre
 
 app.put("/api/classes/:id/change", async (c) => {
   const id = c.req.param("id");
-  const base = findOccurrence(schedule, id);
+  const base = findOccurrence(await timetable(c.env.DB), id);
   if (!base) return c.json({ error: "That class isn't in the timetable." }, 404);
   const before = (await classById(c.env.DB, id))!;
   const body = await c.req.json().catch(() => ({}));
@@ -432,9 +445,40 @@ app.delete("/api/classes/:id/change", async (c) => {
   const before = await classById(c.env.DB, id);
   if (!before) return c.json({ error: "That class isn't in the timetable." }, 404);
   await c.env.DB.prepare("DELETE FROM class_changes WHERE occurrence_id = ?").bind(id).run();
-  const after = findOccurrence(schedule, id)!;
+  const after = findOccurrence(await timetable(c.env.DB), id)!;
   await syncClassTasks(c.env.DB, before, after);
   return c.json({ occurrence: after });
+});
+
+/** Changes the room of a class for every week; the room from schedule.json restores the timetable. */
+app.put("/api/sessions/:id/room", async (c) => {
+  const id = c.req.param("id");
+  const session = schedule.sessions.find((x) => x.id === id);
+  if (!session) return c.json({ error: "That class isn't in the timetable." }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  const room = String(body.room ?? "").trim().slice(0, 40);
+  if (!room) throw bad("Enter the room.");
+  // Open tasks due at this class follow the room, as with a one-off change.
+  const { results } = await c.env.DB.prepare("SELECT DISTINCT occurrence_id AS id FROM tasks WHERE occurrence_id LIKE ? AND done = 0")
+    .bind(`${id}@%`)
+    .all<{ id: string }>();
+  const before = new Map<string, Occurrence>();
+  for (const { id: occId } of results) {
+    const o = await classById(c.env.DB, occId);
+    if (o) before.set(occId, o);
+  }
+  if (room === (session.room ?? "")) {
+    await c.env.DB.prepare("DELETE FROM session_rooms WHERE session_id = ?").bind(id).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO session_rooms (session_id, room, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET room = excluded.room, updated_at = excluded.updated_at`,
+    )
+      .bind(id, room, Date.now())
+      .run();
+  }
+  for (const [occId, o] of before) await syncClassTasks(c.env.DB, o, (await classById(c.env.DB, occId))!);
+  return c.json({ sessions: (await timetable(c.env.DB)).sessions });
 });
 
 async function loadAbsences(db: D1Database): Promise<string[]> {
